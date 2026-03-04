@@ -96,9 +96,7 @@ def apply_constraints_to_project(project: Project) -> None:
     # Convention: surface_kind is interpreted at wing-level from first bay.
     def wing_kind(wi: int) -> str:
         w = project.wings[wi]
-        if not w.bays:
-            return "wing"
-        return (w.bays[0].surface_kind or "wing").lower().strip()
+        return (getattr(w, "surface_kind", "wing") or "wing").lower().strip()
 
     def wing_tip_bay(wi: int) -> BayModel | None:
         if wi < 0 or wi >= len(project.wings):
@@ -157,5 +155,6 @@ def apply_constraints_to_project(project: Project) -> None:
             if m2 is not None and s_tip is not None:
                 copy_tip_to_slave_tip(m2, s_tip)
 
-    for _, _, b in flats:
+    for wi, _, b in flats:
+        b.surface_kind = wing_kind(wi)
         update_default_sections_from_bay(b)

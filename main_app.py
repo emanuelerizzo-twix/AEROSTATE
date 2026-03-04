@@ -39,6 +39,16 @@ from geometry import (
 )
 from constraints import flatten_bays as flatten_project_bays, flat_bay_names as project_flat_bay_names, apply_constraints_to_project
 
+SURFACE_KINDS = ("wing", "winglet", "bulk", "fin", "fuselage_top", "fuselage_lat")
+SURFACE_LABELS = {
+    "wing": "Wing",
+    "winglet": "Winglet",
+    "bulk": "Bulk",
+    "fin": "Fin",
+    "fuselage_top": "Fuselage Top",
+    "fuselage_lat": "Fuselage Lateral",
+}
+
 # -----------------------------
 # VTK View + overlay manipulator
 # -----------------------------
@@ -744,16 +754,19 @@ class MainWindow(QMainWindow):
         m_file.addAction(a_export)
 
         m_edit = mb.addMenu("Edit")
-        a_add_w = QAction("Add Wing", self); a_add_w.triggered.connect(self.add_wing)
-        a_add_b = QAction("Add Bay to selected Wing", self); a_add_b.triggered.connect(self.add_bay_to_selected_wing)
+        for kind in SURFACE_KINDS:
+            act = QAction(f"Add {SURFACE_LABELS[kind]}", self)
+            act.triggered.connect(partial(self.add_surface, kind))
+            m_edit.addAction(act)
+        a_add_b = QAction("Add Bay to selected Surface", self); a_add_b.triggered.connect(self.add_bay_to_selected_wing)
         a_connect = QAction("Connect Bays...", self); a_connect.triggered.connect(self.open_connect_dialog)
-        a_rm_w = QAction("Remove Wing", self); a_rm_w.triggered.connect(self.remove_selected_wing)
+        a_rm_w = QAction("Remove Surface", self); a_rm_w.triggered.connect(self.remove_selected_wing)
         a_rm_b = QAction("Remove Bay", self); a_rm_b.triggered.connect(self.remove_selected_bay)
-        m_edit.addAction(a_add_w); m_edit.addAction(a_add_b); m_edit.addAction(a_connect)
+        m_edit.addAction(a_add_b); m_edit.addAction(a_connect)
 
         m_surface = m_edit.addMenu("Set Surface Kind")
-        for kind in ("wing", "winglet", "bulk", "fin"):
-            act = QAction(kind, self)
+        for kind in SURFACE_KINDS:
+            act = QAction(SURFACE_LABELS[kind], self)
             act.triggered.connect(partial(self._set_selected_wing_surface_kind, kind))
             m_surface.addAction(act)
 
@@ -847,7 +860,7 @@ class MainWindow(QMainWindow):
             item.setFlags(item.flags() & ~Qt.ItemIsEditable)
 
         for wi, w in enumerate(self.project.wings):
-            w_item = QTreeWidgetItem(root, ["wing", w.name, ""])
+            w_item = QTreeWidgetItem(root, [w.surface_kind, w.name, ""])
             w_item.setData(0, Qt.UserRole, ("wing", wi))
             w_item.setFlags(w_item.flags() | Qt.ItemIsEditable)
             w_item.setExpanded(True)
@@ -969,7 +982,7 @@ class MainWindow(QMainWindow):
             if kind == "wing":
                 wi = tag[1]
                 w = self.project.wings[wi]
-                self.props.set_title(f"Wing: {w.name}")
+                self.props.set_title(f"Surface: {w.name}")
                 # Name editable
                 name_edit = QLineEdit(w.name)
                 name_edit.editingFinished.connect(lambda: self._set_wing_name_from_panel(wi, name_edit.text()))
@@ -977,8 +990,39 @@ class MainWindow(QMainWindow):
                 sp_wd = QDoubleSpinBox(); sp_wd.setDecimals(3); sp_wd.setFixedWidth(100); sp_wd.setRange(0.0, 1e9); sp_wd.setSingleStep(0.05); sp_wd.setValue(float(w.density_kg_m2))
                 sp_wd.valueChanged.connect(lambda v: (None if self.props._block else self._set_wing_density(wi, float(v))))
                 self.props.form.addRow("Density [kg/m²]", sp_wd)
-                # Add bay
-                btn = QPushButton("Add bay to this wing")
+
+                cb_kind = QComboBox()
+                cb_kind.addItems(list(SURFACE_KINDS))
+                cb_kind.setCurrentText(getattr(w, "surface_kind", "wing"))
+                cb_kind.currentTextChanged.connect(lambda t: (None if self.props._block else self._set_selected_wing_surface_kind(t, wi=wi)))
+                self.props.form.addRow("surface_kind", cb_kind)
+
+                wing_geos = [
+                    compute_bay_geometry_summary(wb, w.density_kg_m2 if wb.use_wing_density else wb.density_kg_m2)
+                    for wb in w.bays
+                ]
+                wing_geo = combine_geometry_summaries(wing_geos)
+                cmass = sum(float(cm.mass) for wb in w.bays for cm in wb.concentrated_masses)
+                self.props.form.addRow("Area [m²]", QLabel(f"{wing_geo.area:.6g}"))
+                self.props.form.addRow("Mass [kg]", QLabel(f"{wing_geo.mass:.6g}"))
+                self.props.form.addRow("Concentrated masses [kg]", QLabel(f"{cmass:.6g}"))
+
+                for inert_attr, label in [
+                    ("mass", "Mass override [kg]"),
+                    ("Ixx", "Ixx [kg·m²]"),
+                    ("Iyy", "Iyy [kg·m²]"),
+                    ("Izz", "Izz [kg·m²]"),
+                    ("Ixy", "Ixy [kg·m²]"),
+                    ("Ixz", "Ixz [kg·m²]"),
+                    ("Iyz", "Iyz [kg·m²]"),
+                ]:
+                    sp_in = QDoubleSpinBox(); sp_in.setDecimals(3); sp_in.setFixedWidth(100)
+                    sp_in.setRange(-1e9, 1e9); sp_in.setSingleStep(0.1)
+                    sp_in.setValue(float(getattr(w.inertial, inert_attr) or 0.0))
+                    sp_in.valueChanged.connect(lambda v, a=inert_attr: (None if self.props._block else self._set_wing_inertial_num(wi, a, float(v))))
+                    self.props.form.addRow(label, sp_in)
+
+                btn = QPushButton("Add bay to this surface")
                 btn.clicked.connect(lambda: self._add_bay_to_wing_index(wi))
                 self.props.form.addRow("", btn)
 
@@ -1040,8 +1084,8 @@ class MainWindow(QMainWindow):
                 nm = QLineEdit(b.name)
                 nm.editingFinished.connect(lambda: self._set_bay_name_from_panel(wi, bi, nm.text()))
                 form_inputs.addRow("name", nm)
-                add_input_combo("surface_kind", ["wing", "winglet", "bulk", "fin", "fuselage_top", "fuselage_lat"], b.surface_kind,
-                                lambda t: self._set_bay_surface_kind(wi, bi, t))
+                add_input_combo("surface_kind", list(SURFACE_KINDS), self.project.wings[wi].surface_kind,
+                                lambda t: self._set_selected_wing_surface_kind(t, wi=wi))
 
                 # Tip chord mode (CTIP/TAPER)
                 cb_tip = add_input_combo("tip_chord_mode", ["CTIP", "TAPER"], b.tip_chord_mode.upper(),
@@ -1290,25 +1334,11 @@ class MainWindow(QMainWindow):
                 form_geom.addRow("Wing CG Y [m]", QLabel(f"{wing_geo.cg[1]:.6g}"))
                 form_geom.addRow("Wing CG Z [m]", QLabel(f"{wing_geo.cg[2]:.6g}"))
 
-                form_geom.addRow("--- Inertias ---", QLabel(""))
-                for inert_attr, label in [
-                    ("mass", "Mass override [kg]"),
-                    ("Ixx", "Ixx [kg·m²]"),
-                    ("Iyy", "Iyy [kg·m²]"),
-                    ("Izz", "Izz [kg·m²]"),
-                    ("Ixy", "Ixy [kg·m²]"),
-                    ("Ixz", "Ixz [kg·m²]"),
-                    ("Iyz", "Iyz [kg·m²]"),
-                ]:
-                    sp_in = compact_dspin(QDoubleSpinBox())
-                    sp_in.setRange(-1e9, 1e9)
-                    sp_in.setSingleStep(0.1)
-                    sp_in.setValue(float(getattr(b.inertial, inert_attr) or 0.0))
-                    sp_in.valueChanged.connect(lambda v, a=inert_attr: (None if self.props._block else self._set_bay_inertial_num(wi, bi, a, float(v))))
-                    form_geom.addRow(label, sp_in)
 
                 tab_masses = QWidget()
                 lay_mass = QVBoxLayout(tab_masses)
+                lay_mass.setContentsMargins(4, 4, 4, 4)
+                lay_mass.setSpacing(4)
                 table = QTableWidget(len(b.concentrated_masses), 5)
                 table.setHorizontalHeaderLabels(["Sel", "X [m]", "Y [m]", "Z [m]", "Mass [kg]"])
                 table.verticalHeader().setVisible(False)
@@ -1316,6 +1346,7 @@ class MainWindow(QMainWindow):
                 table.setSelectionMode(QAbstractItemView.MultiSelection)
                 table.setEditTriggers(QAbstractItemView.AllEditTriggers)
                 table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                table.setMaximumHeight(180)
                 for r, cm in enumerate(b.concentrated_masses):
                     sel_it = QTableWidgetItem("")
                     sel_it.setFlags((sel_it.flags() | Qt.ItemIsUserCheckable) & ~Qt.ItemIsEditable)
@@ -1348,7 +1379,6 @@ class MainWindow(QMainWindow):
                     self._set_bay_concentrated_masses(wi, bi, new_list)
 
                 table.cellChanged.connect(_on_mass_cell_changed)
-                lay_mass.addWidget(table)
 
                 row_btn = QHBoxLayout()
                 btn_add_mass = QPushButton("Add mass")
@@ -1357,6 +1387,7 @@ class MainWindow(QMainWindow):
                 row_btn.addWidget(btn_del_mass)
                 row_btn.addStretch(1)
                 lay_mass.addLayout(row_btn)
+                lay_mass.addWidget(table, 1)
 
                 btn_add_mass.clicked.connect(lambda: self._add_bay_concentrated_mass(wi, bi))
                 btn_del_mass.clicked.connect(lambda: self._remove_checked_bay_concentrated_masses(wi, bi, table))
@@ -1491,8 +1522,8 @@ class MainWindow(QMainWindow):
         self.project.wings[wi].bays[bi].density_kg_m2 = max(0.0, float(density))
         QTimer.singleShot(0, self.on_tree_selection_changed)
 
-    def _set_bay_inertial_num(self, wi: int, bi: int, attr: str, val: float):
-        inert = self.project.wings[wi].bays[bi].inertial
+    def _set_wing_inertial_num(self, wi: int, attr: str, val: float):
+        inert = self.project.wings[wi].inertial
         setattr(inert, attr, float(val))
 
     def _set_bay_concentrated_masses(self, wi: int, bi: int, masses: List[ConcentratedMass]):
@@ -1514,14 +1545,7 @@ class MainWindow(QMainWindow):
         self.on_tree_selection_changed()
 
     def _set_bay_surface_kind(self, wi: int, bi: int, kind: str):
-        allowed = {"wing", "winglet", "bulk", "fin", "fuselage_top", "fuselage_lat"}
-        kind = (kind or "wing").strip().lower()
-        if kind not in allowed:
-            return
-        self.project.wings[wi].bays[bi].surface_kind = kind
-        self._apply_constraints_to_models()
-        self.refresh_scene()
-        self.on_tree_selection_changed()
+        self._set_selected_wing_surface_kind(kind, wi=wi)
 
     def _set_selected_wing_surface_kind(self, kind: str, checked: bool = False, wi: Optional[int] = None):
         if wi is None:
@@ -1534,8 +1558,18 @@ class MainWindow(QMainWindow):
             wi = tag[1]
         if wi is None or wi < 0 or wi >= len(self.project.wings):
             return
+        kind = (kind or "wing").strip().lower()
+        if kind not in SURFACE_KINDS:
+            return
+        if kind == "winglet" and len(self.project.wings[wi].bays) != 1:
+            QMessageBox.warning(self, "Surface kind", "A winglet must contain exactly 1 bay.")
+            return
+        if kind == "bulk" and len(self.project.wings) < 2:
+            QMessageBox.warning(self, "Surface kind", "A bulk requires at least 2 wings/surfaces in project.")
+            return
+        self.project.wings[wi].surface_kind = kind
         for bi in range(len(self.project.wings[wi].bays)):
-            self.project.wings[wi].bays[bi].surface_kind = (kind or "wing").strip().lower()
+            self.project.wings[wi].bays[bi].surface_kind = self.project.wings[wi].surface_kind
         self._apply_constraints_to_models()
         self.rebuild_tree()
         self.refresh_scene()
@@ -1783,6 +1817,9 @@ class MainWindow(QMainWindow):
         w = self.project.wings[wi]
         if bi < 0 or bi >= len(w.bays):
             return
+        if len(w.bays) <= 1:
+            QMessageBox.warning(self, "Remove Bay", "Each surface must have at least 1 bay.")
+            return
         if QMessageBox.question(self, "Remove Bay", f"Remove bay '{w.bays[bi].name}' from wing '{w.name}'?") != QMessageBox.Yes:
             return
         w.bays.pop(bi)
@@ -1792,11 +1829,29 @@ class MainWindow(QMainWindow):
         self.refresh_scene()
         self.on_tree_selection_changed()
 
-    def add_wing(self):
-        w = WingModel(name=f"wing{len(self.project.wings)+1}")
+    def add_surface(self, kind: str = "wing"):
+        kind = (kind or "wing").strip().lower()
+        if kind not in SURFACE_KINDS:
+            kind = "wing"
+        if kind == "bulk" and len(self.project.wings) < 2:
+            QMessageBox.warning(self, "Add bulk", "A bulk requires at least 2 existing wings/surfaces.")
+            return
+        w = WingModel(name=f"{kind}{len(self.project.wings)+1}", surface_kind=kind)
+        b = BayModel(name="Bay 1", surface_kind=kind)
+        update_default_sections_from_bay(b)
+        if self.project.wings:
+            prev = self.project.wings[-1]
+            if prev.bays:
+                tmp = baymodel_to_avlbay(prev.bays[-1])
+                xt, yt, zt = tmp.tip_le()
+                b.x_le_root, b.y_le_root, b.z_le_root = xt, yt, zt
+        w.bays = [b]
         self.project.wings.append(w)
         self.rebuild_tree()
         self.refresh_scene()
+
+    def add_wing(self):
+        self.add_surface("wing")
 
     def add_bay_to_selected_wing(self):
         # Determine current selected wing from tree; fallback to first wing
@@ -1807,10 +1862,13 @@ class MainWindow(QMainWindow):
             if tag and tag[0] in ("wing", "bay", "bay_var", "section", "section_var"):
                 wi = tag[1]
         if not self.project.wings:
-            self.add_wing()
+            self.add_surface("wing")
             wi = 0
         w = self.project.wings[wi]
-        b = BayModel(name=f"Bay {len(w.bays)+1}")
+        if getattr(w, "surface_kind", "wing") == "winglet":
+            QMessageBox.warning(self, "Add Bay", "A winglet can contain only one bay.")
+            return
+        b = BayModel(name=f"Bay {len(w.bays)+1}", surface_kind=getattr(w, "surface_kind", "wing"))
         update_default_sections_from_bay(b)
         # If there is a previous bay in the same wing, do a minimal attach by default
         if w.bays:
@@ -1884,7 +1942,7 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
 
         if tag is None or (isinstance(tag, tuple) and tag and tag[0] == "wing"):
-            a_add_w = QAction("Add Wing", self); a_add_w.triggered.connect(self.add_wing)
+            a_add_w = QAction("Add Wing", self); a_add_w.triggered.connect(lambda: self.add_surface("wing"))
             menu.addAction(a_add_w)
 
         if isinstance(tag, tuple) and tag and tag[0] == "wing":
@@ -1897,7 +1955,7 @@ class MainWindow(QMainWindow):
             menu.addAction(a_rm_w)
 
         if isinstance(tag, tuple) and tag and tag[0] in ("bay", "bay_var", "section", "section_var"):
-            a_add_b2 = QAction("Add Bay to selected Wing", self); a_add_b2.triggered.connect(self.add_bay_to_selected_wing)
+            a_add_b2 = QAction("Add Bay to selected Surface", self); a_add_b2.triggered.connect(self.add_bay_to_selected_wing)
             menu.addAction(a_add_b2)
             a_conn = QAction("Edit constraints (Connect Bays...)...", self); a_conn.triggered.connect(self.open_connect_dialog)
             menu.addAction(a_conn)
@@ -1927,7 +1985,10 @@ class MainWindow(QMainWindow):
         if wi < 0 or wi >= len(self.project.wings):
             return
         w = self.project.wings[wi]
-        b = BayModel(name=f"Bay {len(w.bays)+1}")
+        if getattr(w, "surface_kind", "wing") == "winglet":
+            QMessageBox.warning(self, "Add Bay", "A winglet can contain only one bay.")
+            return
+        b = BayModel(name=f"Bay {len(w.bays)+1}", surface_kind=getattr(w, "surface_kind", "wing"))
         update_default_sections_from_bay(b)
         if w.bays:
             prev = w.bays[-1]
