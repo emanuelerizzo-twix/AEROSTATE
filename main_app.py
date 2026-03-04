@@ -482,6 +482,11 @@ class PropertiesPanel(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(10, 10, 10, 10)
         lay.setSpacing(8)
+        self.setStyleSheet(
+            "QLabel { font-size: 11px; }"
+            "QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox { font-size: 11px; min-height: 24px; }"
+            "QCheckBox { font-size: 11px; }"
+        )
 
         self.title = QLabel("Properties")
         self.title.setStyleSheet("font-weight:700; font-size: 14px;")
@@ -516,7 +521,7 @@ class PropertiesPanel(QWidget):
 
     def _add_dspin(self, label: str, value: float, on_commit, step=0.05):
         sp = QDoubleSpinBox()
-        sp.setDecimals(6)
+        sp.setDecimals(3)
         sp.setRange(-1e9, 1e9)
         sp.setSingleStep(step)
         sp.setValue(float(value))
@@ -696,6 +701,7 @@ class MainWindow(QMainWindow):
         # Remember last connect dialog selections
         self._last_connect_master = 0
         self._last_connect_slave = 0
+        self._bay_tab_index: Dict[Tuple[int, int], int] = {}
 
         self.view3d = VTKCadView(self._ordered_avl_bays)
         self.setCentralWidget(self.view3d)
@@ -711,9 +717,9 @@ class MainWindow(QMainWindow):
         self.props_dock.setWidget(self.props)
         self.props_dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
         self.addDockWidget(Qt.RightDockWidgetArea, self.props_dock)
-        self.props_dock.setMinimumWidth(420)
-        self.props_dock.setMaximumWidth(860)
-        self.resizeDocks([self.tree_dock, self.props_dock], [240, 640], Qt.Horizontal)
+        self.props_dock.setMinimumWidth(210)
+        self.props_dock.setMaximumWidth(430)
+        self.resizeDocks([self.tree_dock, self.props_dock], [240, 320], Qt.Horizontal)
 
         self._build_menu()
         self.rebuild_tree()
@@ -968,7 +974,7 @@ class MainWindow(QMainWindow):
                 name_edit = QLineEdit(w.name)
                 name_edit.editingFinished.connect(lambda: self._set_wing_name_from_panel(wi, name_edit.text()))
                 self.props.form.addRow("name", name_edit)
-                sp_wd = QDoubleSpinBox(); sp_wd.setDecimals(6); sp_wd.setRange(0.0, 1e9); sp_wd.setSingleStep(0.05); sp_wd.setValue(float(w.density_kg_m2))
+                sp_wd = QDoubleSpinBox(); sp_wd.setDecimals(3); sp_wd.setFixedWidth(100); sp_wd.setRange(0.0, 1e9); sp_wd.setSingleStep(0.05); sp_wd.setValue(float(w.density_kg_m2))
                 sp_wd.valueChanged.connect(lambda v: (None if self.props._block else self._set_wing_density(wi, float(v))))
                 self.props.form.addRow("Density [kg/m²]", sp_wd)
                 # Add bay
@@ -1001,12 +1007,20 @@ class MainWindow(QMainWindow):
                 tabs.setTabPosition(QTabWidget.North)
                 self.props.form.addRow("", tabs)
 
+                def compact_dspin(sp: QDoubleSpinBox):
+                    sp.setDecimals(3)
+                    sp.setFixedWidth(100)
+                    return sp
+
+                def compact_spin(sp: QSpinBox):
+                    sp.setFixedWidth(90)
+                    return sp
+
                 tab_inputs = QWidget()
                 form_inputs = QFormLayout(tab_inputs)
 
                 def add_input_dspin(label: str, value: float, on_commit, step: float = 0.05):
-                    sp = QDoubleSpinBox()
-                    sp.setDecimals(6)
+                    sp = compact_dspin(QDoubleSpinBox())
                     sp.setRange(-1e9, 1e9)
                     sp.setSingleStep(step)
                     sp.setValue(float(value))
@@ -1027,13 +1041,13 @@ class MainWindow(QMainWindow):
                 nm.editingFinished.connect(lambda: self._set_bay_name_from_panel(wi, bi, nm.text()))
                 form_inputs.addRow("name", nm)
                 add_input_combo("surface_kind", ["wing", "winglet", "bulk", "fin", "fuselage_top", "fuselage_lat"], b.surface_kind,
-                                lambda t: self._set_selected_wing_surface_kind(t, wi=wi))
+                                lambda t: self._set_bay_surface_kind(wi, bi, t))
 
                 # Tip chord mode (CTIP/TAPER)
                 cb_tip = add_input_combo("tip_chord_mode", ["CTIP", "TAPER"], b.tip_chord_mode.upper(),
                                               lambda t: self._set_bay_tip_mode(wi, bi, t))
                 # Root chord
-                sp_cr = QDoubleSpinBox(); sp_cr.setDecimals(6); sp_cr.setRange(-1e9, 1e9); sp_cr.setSingleStep(0.05); sp_cr.setValue(float(b.c_root))
+                sp_cr = compact_dspin(QDoubleSpinBox()); sp_cr.setRange(-1e9, 1e9); sp_cr.setSingleStep(0.05); sp_cr.setValue(float(b.c_root))
                 sp_cr.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_num(wi, bi, "c_root", float(v))))
                 slave_flat = self._wing_bay_to_flat(wi, bi)
                 wrow = self._make_prop_row_widget(
@@ -1059,7 +1073,7 @@ class MainWindow(QMainWindow):
                 # Sweep mode (LE/C4/TE) + sweep angle
                 add_input_combo("sweep_mode", ["LE", "C4", "TE"], b.sweep_mode.upper(),
                                      lambda t: self._set_bay_mode(wi, bi, "sweep_mode", t))
-                sp_sw = QDoubleSpinBox(); sp_sw.setDecimals(6); sp_sw.setRange(-1e9, 1e9); sp_sw.setSingleStep(0.5); sp_sw.setValue(float(b.sweep_deg))
+                sp_sw = compact_dspin(QDoubleSpinBox()); sp_sw.setRange(-1e9, 1e9); sp_sw.setSingleStep(0.5); sp_sw.setValue(float(b.sweep_deg))
                 sp_sw.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_num(wi, bi, "sweep_deg", float(v))))
                 # Constrained sweep depends on sweep_mode
                 def sweep_ctype():
@@ -1086,7 +1100,7 @@ class MainWindow(QMainWindow):
                 form_inputs.addRow("sweep_deg [deg]", wrow)
 
                 # Position LE root
-                sp_x = QDoubleSpinBox(); sp_x.setDecimals(6); sp_x.setRange(-1e9, 1e9); sp_x.setSingleStep(0.05); sp_x.setValue(float(b.x_le_root))
+                sp_x = compact_dspin(QDoubleSpinBox()); sp_x.setRange(-1e9, 1e9); sp_x.setSingleStep(0.05); sp_x.setValue(float(b.x_le_root))
                 sp_x.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_num(wi, bi, "x_le_root", float(v))))
                 slave_flat = self._wing_bay_to_flat(wi, bi)
                 wrow = self._make_prop_row_widget(
@@ -1102,7 +1116,7 @@ class MainWindow(QMainWindow):
 
                 # Span/dihedral
                 sp_span = add_input_dspin("span [m]", b.span, lambda v: self._set_bay_num(wi, bi, "span", v), step=0.05)
-                sp_di = QDoubleSpinBox(); sp_di.setDecimals(6); sp_di.setRange(-1e9, 1e9); sp_di.setSingleStep(0.5); sp_di.setValue(float(b.dihedral_deg))
+                sp_di = compact_dspin(QDoubleSpinBox()); sp_di.setRange(-1e9, 1e9); sp_di.setSingleStep(0.5); sp_di.setValue(float(b.dihedral_deg))
                 sp_di.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_num(wi, bi, "dihedral_deg", float(v))))
                 slave_flat = self._wing_bay_to_flat(wi, bi)
                 wrow = self._make_prop_row_widget(
@@ -1157,7 +1171,7 @@ class MainWindow(QMainWindow):
                 update_derived_geometry_labels()
 
                 # Twist
-                sp_tr = QDoubleSpinBox(); sp_tr.setDecimals(6); sp_tr.setRange(-1e9, 1e9); sp_tr.setSingleStep(0.2); sp_tr.setValue(float(b.twist_root_deg))
+                sp_tr = compact_dspin(QDoubleSpinBox()); sp_tr.setRange(-1e9, 1e9); sp_tr.setSingleStep(0.2); sp_tr.setValue(float(b.twist_root_deg))
                 sp_tr.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_num(wi, bi, "twist_root_deg", float(v))))
                 slave_flat = self._wing_bay_to_flat(wi, bi)
                 wrow = self._make_prop_row_widget(
@@ -1181,8 +1195,8 @@ class MainWindow(QMainWindow):
                 theta_root = b.rigid_inc_deg + b.twist_root_deg
                 theta_tip = b.rigid_inc_deg + b.twist_tip_deg
 
-                sp_th_r = QDoubleSpinBox(); sp_th_r.setDecimals(6); sp_th_r.setRange(-360.0, 360.0); sp_th_r.setSingleStep(0.2); sp_th_r.setValue(float(theta_root))
-                sp_th_t = QDoubleSpinBox(); sp_th_t.setDecimals(6); sp_th_t.setRange(-360.0, 360.0); sp_th_t.setSingleStep(0.2); sp_th_t.setValue(float(theta_tip))
+                sp_th_r = compact_dspin(QDoubleSpinBox()); sp_th_r.setRange(-360.0, 360.0); sp_th_r.setSingleStep(0.2); sp_th_r.setValue(float(theta_root))
+                sp_th_t = compact_dspin(QDoubleSpinBox()); sp_th_t.setRange(-360.0, 360.0); sp_th_t.setSingleStep(0.2); sp_th_t.setValue(float(theta_tip))
 
                 sp_th_r.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_num(wi, bi, "twist_root_deg", float(v) - b.rigid_inc_deg)))
                 sp_th_t.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_num(wi, bi, "twist_tip_deg", float(v) - b.rigid_inc_deg)))
@@ -1228,25 +1242,26 @@ class MainWindow(QMainWindow):
                 form_inputs.addRow("section.airfoil_root", ed_af_r)
                 form_inputs.addRow("section.airfoil_tip", ed_af_t)
 
-                sp_nchord = QSpinBox(); sp_nchord.setRange(0, 10**9); sp_nchord.setSingleStep(1); sp_nchord.setValue(int(b.nchord))
-                sp_nspan = QSpinBox(); sp_nspan.setRange(0, 10**9); sp_nspan.setSingleStep(1); sp_nspan.setValue(int(b.nspan))
+                sp_nchord = compact_spin(QSpinBox()); sp_nchord.setRange(0, 10**9); sp_nchord.setSingleStep(1); sp_nchord.setValue(int(b.nchord))
+                sp_nspan = compact_spin(QSpinBox()); sp_nspan.setRange(0, 10**9); sp_nspan.setSingleStep(1); sp_nspan.setValue(int(b.nspan))
                 sp_nchord.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_int(wi, bi, "nchord", int(v))))
                 sp_nspan.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_int(wi, bi, "nspan", int(v))))
                 form_inputs.addRow("NChord [-]", sp_nchord)
                 form_inputs.addRow("NSpan [-]", sp_nspan)
 
+                tab_geom = QWidget()
+                form_geom = QFormLayout(tab_geom)
+
                 chk_use_wing_density = QCheckBox("Use wing density")
                 chk_use_wing_density.setChecked(bool(b.use_wing_density))
-                sp_bd = QDoubleSpinBox(); sp_bd.setDecimals(6); sp_bd.setRange(0.0, 1e9); sp_bd.setSingleStep(0.05)
+                sp_bd = compact_dspin(QDoubleSpinBox()); sp_bd.setRange(0.0, 1e9); sp_bd.setSingleStep(0.05)
                 sp_bd.setValue(float(b.density_kg_m2))
                 sp_bd.setEnabled(not b.use_wing_density)
                 chk_use_wing_density.toggled.connect(lambda on: (None if self.props._block else self._set_bay_use_wing_density(wi, bi, bool(on))))
                 sp_bd.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_density(wi, bi, float(v))))
-                form_inputs.addRow("", chk_use_wing_density)
-                form_inputs.addRow("Density [kg/m²]", sp_bd)
-
-                tab_geom = QWidget()
-                form_geom = QFormLayout(tab_geom)
+                form_geom.addRow("", chk_use_wing_density)
+                form_geom.addRow("Density [kg/m²]", sp_bd)
+                form_geom.addRow("", QLabel(""))
 
                 wing = self.project.wings[wi]
                 bay_density = wing.density_kg_m2 if b.use_wing_density else b.density_kg_m2
@@ -1285,8 +1300,7 @@ class MainWindow(QMainWindow):
                     ("Ixz", "Ixz [kg·m²]"),
                     ("Iyz", "Iyz [kg·m²]"),
                 ]:
-                    sp_in = QDoubleSpinBox()
-                    sp_in.setDecimals(6)
+                    sp_in = compact_dspin(QDoubleSpinBox())
                     sp_in.setRange(-1e9, 1e9)
                     sp_in.setSingleStep(0.1)
                     sp_in.setValue(float(getattr(b.inertial, inert_attr) or 0.0))
@@ -1316,15 +1330,21 @@ class MainWindow(QMainWindow):
                     if self.props._block:
                         return
                     new_list: List[ConcentratedMass] = []
+                    table.blockSignals(True)
                     for rr in range(table.rowCount()):
                         vals = []
                         for cc in range(1, 5):
                             itv = table.item(rr, cc)
                             try:
-                                vals.append(float(itv.text()) if itv else 0.0)
+                                v = float(itv.text()) if itv else 0.0
                             except Exception:
-                                vals.append(0.0)
+                                v = 0.0
+                            v = round(v, 3)
+                            vals.append(v)
+                            if itv is not None:
+                                itv.setText(f"{v:.3f}")
                         new_list.append(ConcentratedMass(x=vals[0], y=vals[1], z=vals[2], mass=vals[3]))
+                    table.blockSignals(False)
                     self._set_bay_concentrated_masses(wi, bi, new_list)
 
                 table.cellChanged.connect(_on_mass_cell_changed)
@@ -1344,6 +1364,9 @@ class MainWindow(QMainWindow):
                 tabs.addTab(tab_inputs, "INPUT")
                 tabs.addTab(tab_geom, "GEO/Inertias")
                 tabs.addTab(tab_masses, "Concentrated Masses")
+                key = (wi, bi)
+                tabs.currentChanged.connect(lambda idx, k=key: self._bay_tab_index.__setitem__(k, idx))
+                tabs.setCurrentIndex(self._bay_tab_index.get(key, 0))
 
         finally:
             self.props._block = False
@@ -1474,7 +1497,6 @@ class MainWindow(QMainWindow):
 
     def _set_bay_concentrated_masses(self, wi: int, bi: int, masses: List[ConcentratedMass]):
         self.project.wings[wi].bays[bi].concentrated_masses = list(masses)
-        self.on_tree_selection_changed()
 
     def _add_bay_concentrated_mass(self, wi: int, bi: int):
         self.project.wings[wi].bays[bi].concentrated_masses.append(ConcentratedMass())
@@ -1498,7 +1520,6 @@ class MainWindow(QMainWindow):
             return
         self.project.wings[wi].bays[bi].surface_kind = kind
         self._apply_constraints_to_models()
-        self.rebuild_tree()
         self.refresh_scene()
         self.on_tree_selection_changed()
 
