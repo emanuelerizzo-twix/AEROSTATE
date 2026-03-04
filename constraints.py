@@ -92,5 +92,70 @@ def apply_constraints_to_project(project: Project) -> None:
             update_default_sections_from_bay(s)
             s.sections[0].airfoil = m.sections[-1].airfoil
 
+    # Surface-kind automatic constraints.
+    # Convention: surface_kind is interpreted at wing-level from first bay.
+    def wing_kind(wi: int) -> str:
+        w = project.wings[wi]
+        if not w.bays:
+            return "wing"
+        return (w.bays[0].surface_kind or "wing").lower().strip()
+
+    def wing_tip_bay(wi: int) -> BayModel | None:
+        if wi < 0 or wi >= len(project.wings):
+            return None
+        bays = project.wings[wi].bays
+        return bays[-1] if bays else None
+
+    def wing_root_bay(wi: int) -> BayModel | None:
+        if wi < 0 or wi >= len(project.wings):
+            return None
+        bays = project.wings[wi].bays
+        return bays[0] if bays else None
+
+    def copy_tip_to_slave_root(master_tip: BayModel, slave_root: BayModel) -> None:
+        tmpm = baymodel_to_avlbay(master_tip)
+        xt, yt, zt = tmpm.tip_le()
+        slave_root.x_le_root = xt
+        slave_root.y_le_root = yt
+        slave_root.z_le_root = zt
+        slave_root.c_root = tmpm.c_tip_effective()
+        if slave_root.tip_chord_mode.upper() == "CTIP":
+            slave_root.taper = (slave_root.c_tip / slave_root.c_root) if slave_root.c_root != 0 else slave_root.taper
+        else:
+            slave_root.c_tip = slave_root.taper * slave_root.c_root
+        update_default_sections_from_bay(master_tip)
+        update_default_sections_from_bay(slave_root)
+        slave_root.sections[0].airfoil = master_tip.sections[-1].airfoil
+        slave_root.twist_root_deg = master_tip.rigid_inc_deg + master_tip.twist_tip_deg - slave_root.rigid_inc_deg
+
+    def copy_tip_to_slave_tip(master_tip: BayModel, slave_tip: BayModel) -> None:
+        tmpm = baymodel_to_avlbay(master_tip)
+        slave_tip.c_tip = tmpm.c_tip_effective()
+        if slave_tip.tip_chord_mode.upper() == "CTIP":
+            slave_tip.taper = (slave_tip.c_tip / slave_tip.c_root) if slave_tip.c_root != 0 else slave_tip.taper
+        else:
+            slave_tip.c_tip = slave_tip.taper * slave_tip.c_root
+        update_default_sections_from_bay(master_tip)
+        update_default_sections_from_bay(slave_tip)
+        slave_tip.sections[-1].airfoil = master_tip.sections[-1].airfoil
+        slave_tip.twist_tip_deg = master_tip.rigid_inc_deg + master_tip.twist_tip_deg - slave_tip.rigid_inc_deg
+
+    for wi in range(len(project.wings)):
+        kind = wing_kind(wi)
+        if kind == "winglet":
+            m = wing_tip_bay(wi - 1)
+            s = wing_root_bay(wi)
+            if m is not None and s is not None:
+                copy_tip_to_slave_root(m, s)
+        elif kind == "bulk":
+            s_root = wing_root_bay(wi)
+            s_tip = wing_tip_bay(wi)
+            m1 = wing_tip_bay(wi - 1)
+            m2 = wing_tip_bay(wi + 1)
+            if m1 is not None and s_root is not None:
+                copy_tip_to_slave_root(m1, s_root)
+            if m2 is not None and s_tip is not None:
+                copy_tip_to_slave_tip(m2, s_tip)
+
     for _, _, b in flats:
         update_default_sections_from_bay(b)

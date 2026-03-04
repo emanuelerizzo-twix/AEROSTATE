@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+from functools import partial
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
 
@@ -710,9 +711,9 @@ class MainWindow(QMainWindow):
         self.props_dock.setWidget(self.props)
         self.props_dock.setAllowedAreas(Qt.RightDockWidgetArea | Qt.LeftDockWidgetArea)
         self.addDockWidget(Qt.RightDockWidgetArea, self.props_dock)
-        self.props_dock.setMinimumWidth(320)
-        self.props_dock.setMaximumWidth(520)
-        self.resizeDocks([self.tree_dock, self.props_dock], [260, 420], Qt.Horizontal)
+        self.props_dock.setMinimumWidth(420)
+        self.props_dock.setMaximumWidth(860)
+        self.resizeDocks([self.tree_dock, self.props_dock], [240, 640], Qt.Horizontal)
 
         self._build_menu()
         self.rebuild_tree()
@@ -743,6 +744,13 @@ class MainWindow(QMainWindow):
         a_rm_w = QAction("Remove Wing", self); a_rm_w.triggered.connect(self.remove_selected_wing)
         a_rm_b = QAction("Remove Bay", self); a_rm_b.triggered.connect(self.remove_selected_bay)
         m_edit.addAction(a_add_w); m_edit.addAction(a_add_b); m_edit.addAction(a_connect)
+
+        m_surface = m_edit.addMenu("Set Surface Kind")
+        for kind in ("wing", "winglet", "bulk", "fin"):
+            act = QAction(kind, self)
+            act.triggered.connect(partial(self._set_selected_wing_surface_kind, kind))
+            m_surface.addAction(act)
+
         m_edit.addSeparator()
         m_edit.addAction(a_rm_w); m_edit.addAction(a_rm_b)
 
@@ -1018,6 +1026,8 @@ class MainWindow(QMainWindow):
                 nm = QLineEdit(b.name)
                 nm.editingFinished.connect(lambda: self._set_bay_name_from_panel(wi, bi, nm.text()))
                 form_inputs.addRow("name", nm)
+                add_input_combo("surface_kind", ["wing", "winglet", "bulk", "fin", "fuselage_top", "fuselage_lat"], b.surface_kind,
+                                lambda t: self._set_selected_wing_surface_kind(t, wi=wi))
 
                 # Tip chord mode (CTIP/TAPER)
                 cb_tip = add_input_combo("tip_chord_mode", ["CTIP", "TAPER"], b.tip_chord_mode.upper(),
@@ -1285,17 +1295,22 @@ class MainWindow(QMainWindow):
 
                 tab_masses = QWidget()
                 lay_mass = QVBoxLayout(tab_masses)
-                table = QTableWidget(len(b.concentrated_masses), 4)
-                table.setHorizontalHeaderLabels(["X [m]", "Y [m]", "Z [m]", "Mass [kg]"])
+                table = QTableWidget(len(b.concentrated_masses), 5)
+                table.setHorizontalHeaderLabels(["Sel", "X [m]", "Y [m]", "Z [m]", "Mass [kg]"])
                 table.verticalHeader().setVisible(False)
                 table.setSelectionBehavior(QAbstractItemView.SelectRows)
-                table.setSelectionMode(QAbstractItemView.SingleSelection)
+                table.setSelectionMode(QAbstractItemView.MultiSelection)
+                table.setEditTriggers(QAbstractItemView.AllEditTriggers)
                 table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
                 for r, cm in enumerate(b.concentrated_masses):
-                    table.setItem(r, 0, QTableWidgetItem(f"{cm.x:.6g}"))
-                    table.setItem(r, 1, QTableWidgetItem(f"{cm.y:.6g}"))
-                    table.setItem(r, 2, QTableWidgetItem(f"{cm.z:.6g}"))
-                    table.setItem(r, 3, QTableWidgetItem(f"{cm.mass:.6g}"))
+                    sel_it = QTableWidgetItem("")
+                    sel_it.setFlags((sel_it.flags() | Qt.ItemIsUserCheckable) & ~Qt.ItemIsEditable)
+                    sel_it.setCheckState(Qt.Unchecked)
+                    table.setItem(r, 0, sel_it)
+                    table.setItem(r, 1, QTableWidgetItem(f"{cm.x:.6g}"))
+                    table.setItem(r, 2, QTableWidgetItem(f"{cm.y:.6g}"))
+                    table.setItem(r, 3, QTableWidgetItem(f"{cm.z:.6g}"))
+                    table.setItem(r, 4, QTableWidgetItem(f"{cm.mass:.6g}"))
 
                 def _on_mass_cell_changed(_row: int, _col: int):
                     if self.props._block:
@@ -1303,7 +1318,7 @@ class MainWindow(QMainWindow):
                     new_list: List[ConcentratedMass] = []
                     for rr in range(table.rowCount()):
                         vals = []
-                        for cc in range(4):
+                        for cc in range(1, 5):
                             itv = table.item(rr, cc)
                             try:
                                 vals.append(float(itv.text()) if itv else 0.0)
@@ -1317,14 +1332,14 @@ class MainWindow(QMainWindow):
 
                 row_btn = QHBoxLayout()
                 btn_add_mass = QPushButton("Add mass")
-                btn_del_mass = QPushButton("Remove selected")
+                btn_del_mass = QPushButton("Remove checked")
                 row_btn.addWidget(btn_add_mass)
                 row_btn.addWidget(btn_del_mass)
                 row_btn.addStretch(1)
                 lay_mass.addLayout(row_btn)
 
                 btn_add_mass.clicked.connect(lambda: self._add_bay_concentrated_mass(wi, bi))
-                btn_del_mass.clicked.connect(lambda: self._remove_selected_bay_concentrated_mass(wi, bi, table.currentRow()))
+                btn_del_mass.clicked.connect(lambda: self._remove_checked_bay_concentrated_masses(wi, bi, table))
 
                 tabs.addTab(tab_inputs, "INPUT")
                 tabs.addTab(tab_geom, "GEO/Inertias")
@@ -1465,11 +1480,45 @@ class MainWindow(QMainWindow):
         self.project.wings[wi].bays[bi].concentrated_masses.append(ConcentratedMass())
         self.on_tree_selection_changed()
 
-    def _remove_selected_bay_concentrated_mass(self, wi: int, bi: int, row: int):
+    def _remove_checked_bay_concentrated_masses(self, wi: int, bi: int, table: QTableWidget):
         b = self.project.wings[wi].bays[bi]
-        if 0 <= row < len(b.concentrated_masses):
-            b.concentrated_masses.pop(row)
-            self.on_tree_selection_changed()
+        keep: List[ConcentratedMass] = []
+        for r, cm in enumerate(b.concentrated_masses):
+            it = table.item(r, 0)
+            if it is not None and it.checkState() == Qt.Checked:
+                continue
+            keep.append(cm)
+        b.concentrated_masses = keep
+        self.on_tree_selection_changed()
+
+    def _set_bay_surface_kind(self, wi: int, bi: int, kind: str):
+        allowed = {"wing", "winglet", "bulk", "fin", "fuselage_top", "fuselage_lat"}
+        kind = (kind or "wing").strip().lower()
+        if kind not in allowed:
+            return
+        self.project.wings[wi].bays[bi].surface_kind = kind
+        self._apply_constraints_to_models()
+        self.rebuild_tree()
+        self.refresh_scene()
+        self.on_tree_selection_changed()
+
+    def _set_selected_wing_surface_kind(self, kind: str, checked: bool = False, wi: Optional[int] = None):
+        if wi is None:
+            it = self.tree.currentItem()
+            if not it:
+                return
+            tag = it.data(0, Qt.UserRole)
+            if not tag or tag[0] not in ("wing", "bay", "bay_var", "section", "section_var"):
+                return
+            wi = tag[1]
+        if wi is None or wi < 0 or wi >= len(self.project.wings):
+            return
+        for bi in range(len(self.project.wings[wi].bays)):
+            self.project.wings[wi].bays[bi].surface_kind = (kind or "wing").strip().lower()
+        self._apply_constraints_to_models()
+        self.rebuild_tree()
+        self.refresh_scene()
+        self.on_tree_selection_changed()
 
     def _set_bay_tip_mode(self, wi: int, bi: int, mode: str):
         b = self.project.wings[wi].bays[bi]
@@ -1489,6 +1538,16 @@ class MainWindow(QMainWindow):
         self.refresh_scene()
         # refresh panel enable/disable
         self.on_tree_selection_changed()
+
+    def _set_bay_mode(self, wi: int, bi: int, attr: str, val: str):
+        b = self.project.wings[wi].bays[bi]
+        if attr == "surface_kind":
+            self._set_bay_surface_kind(wi, bi, val)
+            return
+        setattr(b, attr, str(val).upper())
+        update_default_sections_from_bay(b)
+        self.rebuild_tree()
+        self.refresh_scene()
 
     def _set_bay_num(self, wi: int, bi: int, attr: str, val: float):
         b = self.project.wings[wi].bays[bi]

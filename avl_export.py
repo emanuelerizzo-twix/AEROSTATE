@@ -90,6 +90,19 @@ class Bay:
 
     def dy_dz(self) -> Tuple[float, float]:
         gamma = math.radians(self.dihedral_deg)
+        sk = self.surface_kind.lower().strip()
+        if sk == "fin":
+            # Fin convention: geometry primarily in XZ.
+            # dihedral_deg is interpreted in YZ plane:
+            #   0° -> fully vertical (+Z), >0° -> tilted toward +Y.
+            if self.span_def.upper() == "L3D":
+                l3d = self.span_l3d if self.span_l3d > 0.0 else self.span
+                dy = l3d * math.sin(gamma)
+                dz = l3d * math.cos(gamma)
+                return dy, dz
+            dz = self.span
+            dy = dz * math.tan(gamma)
+            return dy, dz
         if self.span_def.upper() == "L3D":
             l3d = self.span_l3d if self.span_l3d > 0.0 else self.span
             dy = l3d * math.cos(gamma)
