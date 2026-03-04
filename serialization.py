@@ -46,6 +46,7 @@ def project_to_dict(p: Project) -> Dict[str, Any]:
             "c_root": b.c_root,
             "tip_chord_mode": b.tip_chord_mode, "c_tip": b.c_tip, "taper": b.taper,
             "span": b.span, "dihedral_deg": b.dihedral_deg,
+            "span_def": b.span_def, "length_3d": b.length_3d, "surface_kind": b.surface_kind,
             "sweep_mode": b.sweep_mode, "sweep_deg": b.sweep_deg,
             "twist_root_deg": b.twist_root_deg, "twist_tip_deg": b.twist_tip_deg,
             "rigid_inc_deg": b.rigid_inc_deg,
@@ -67,7 +68,7 @@ def project_to_dict(p: Project) -> Dict[str, Any]:
         }
 
     return {
-        "schema": 1,
+        "schema": 2,
         "wings": [wing_to(w) for w in p.wings],
         "connections": [
             {"master_index": c.master_index, "slave_index": c.slave_index, "ctype": c.ctype}
@@ -126,6 +127,9 @@ def project_from_dict(d: Dict[str, Any]) -> Project:
             taper=float(b.get("taper", 1.0)),
             span=float(b.get("span", 1.0)),
             dihedral_deg=float(b.get("dihedral_deg", 0.0)),
+            span_def=str(b.get("span_def", "DY")),
+            length_3d=(None if b.get("length_3d", None) is None else float(b.get("length_3d"))),
+            surface_kind=str(b.get("surface_kind", "wing")),
             sweep_mode=b.get("sweep_mode", "LE"),
             sweep_deg=float(b.get("sweep_deg", 0.0)),
             twist_root_deg=float(b.get("twist_root_deg", 0.0)),

@@ -61,6 +61,9 @@ class Bay:
 
     span: float = 1.0
     dihedral_deg: float = 0.0
+    span_def: str = "DY"  # DY|L3D
+    span_l3d: float = 0.0
+    surface_kind: str = "wing"  # wing|fin|winglet|bulk|fuselage_top|fuselage_lat
 
     sweep_mode: str = "LE"  # LE|C4|TE
     sweep_deg: float = 0.0
@@ -86,8 +89,14 @@ class Bay:
         return self.c_tip
 
     def dy_dz(self) -> Tuple[float, float]:
+        gamma = math.radians(self.dihedral_deg)
+        if self.span_def.upper() == "L3D":
+            l3d = self.span_l3d if self.span_l3d > 0.0 else self.span
+            dy = l3d * math.cos(gamma)
+            dz = l3d * math.sin(gamma)
+            return dy, dz
         dy = self.span
-        dz = dy * math.tan(math.radians(self.dihedral_deg))
+        dz = dy * math.tan(gamma)
         return dy, dz
 
     def dihedral_from_yz_deg(self) -> float:
@@ -118,6 +127,8 @@ class Bay:
 
     def length_3d(self) -> float:
         """True 3D bay length based on LE displacement vector."""
+        if self.span_def.upper() == "L3D" and self.span_l3d > 0.0:
+            return self.span_l3d
         dx = self.dx_le()
         dy, dz = self.dy_dz()
         return math.sqrt(dx * dx + dy * dy + dz * dz)

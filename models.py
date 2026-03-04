@@ -56,6 +56,9 @@ class BayModel:
     taper: float = 1.0
     span: float = 1.0
     dihedral_deg: float = 0.0
+    span_def: str = "DY"  # DY|L3D
+    length_3d: Optional[float] = None
+    surface_kind: str = "wing"  # wing|fin|winglet|bulk|fuselage_top|fuselage_lat
     sweep_mode: str = "LE"
     sweep_deg: float = 0.0
     twist_root_deg: float = 0.0
@@ -75,6 +78,7 @@ class BayModel:
         "x_le_root": VarMeta(False), "y_le_root": VarMeta(False), "z_le_root": VarMeta(False),
         "c_root": VarMeta(False), "c_tip": VarMeta(False), "taper": VarMeta(False),
         "span": VarMeta(False), "dihedral_deg": VarMeta(False),
+        "span_def": VarMeta(False), "length_3d": VarMeta(False), "surface_kind": VarMeta(False),
         "sweep_deg": VarMeta(False), "twist_root_deg": VarMeta(False), "twist_tip_deg": VarMeta(False),
         "rigid_inc_deg": VarMeta(False), "nchord": VarMeta(False), "nspan": VarMeta(False),
     })

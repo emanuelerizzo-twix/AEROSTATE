@@ -17,7 +17,7 @@ def update_default_sections_from_bay(b: BayModel) -> None:
     tmp = AvlBay(
         x_le_root=b.x_le_root, y_le_root=b.y_le_root, z_le_root=b.z_le_root,
         c_root=b.c_root, tip_chord_mode=b.tip_chord_mode, c_tip=b.c_tip, taper=b.taper,
-        span=b.span, dihedral_deg=b.dihedral_deg, sweep_mode=b.sweep_mode, sweep_deg=b.sweep_deg,
+        span=b.span, dihedral_deg=b.dihedral_deg, span_def=b.span_def, span_l3d=(b.length_3d or 0.0), surface_kind=b.surface_kind, sweep_mode=b.sweep_mode, sweep_deg=b.sweep_deg,
         twist_root_deg=b.twist_root_deg, twist_tip_deg=b.twist_tip_deg, rigid_inc_deg=b.rigid_inc_deg,
         nchord=b.nchord, cspace=b.cspace, nspan=b.nspan, sspace=b.sspace,
     )
@@ -43,7 +43,7 @@ def baymodel_to_avlbay(b: BayModel) -> AvlBay:
     avb = AvlBay(
         x_le_root=b.x_le_root, y_le_root=b.y_le_root, z_le_root=b.z_le_root,
         c_root=b.c_root, tip_chord_mode=b.tip_chord_mode, c_tip=b.c_tip, taper=b.taper,
-        span=b.span, dihedral_deg=b.dihedral_deg, sweep_mode=b.sweep_mode, sweep_deg=b.sweep_deg,
+        span=b.span, dihedral_deg=b.dihedral_deg, span_def=b.span_def, span_l3d=(b.length_3d or 0.0), surface_kind=b.surface_kind, sweep_mode=b.sweep_mode, sweep_deg=b.sweep_deg,
         twist_root_deg=b.twist_root_deg, twist_tip_deg=b.twist_tip_deg, rigid_inc_deg=b.rigid_inc_deg,
         nchord=b.nchord, cspace=b.cspace, nspan=b.nspan, sspace=b.sspace,
         airfoil_root=root_af, airfoil_tip=tip_af,
