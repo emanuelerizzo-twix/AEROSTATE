@@ -981,6 +981,7 @@ class MainWindow(QMainWindow):
             self.props.clear()
             if kind == "wing":
                 wi = tag[1]
+                self._normalize_surface_links()
                 w = self.project.wings[wi]
                 self.props.set_title(f"Surface: {w.name}")
                 # Name editable
@@ -996,6 +997,52 @@ class MainWindow(QMainWindow):
                 cb_kind.setCurrentText(getattr(w, "surface_kind", "wing"))
                 cb_kind.currentTextChanged.connect(lambda t: (None if self.props._block else self._set_selected_wing_surface_kind(t, wi=wi)))
                 self.props.form.addRow("surface_kind", cb_kind)
+
+                if getattr(w, "surface_kind", "wing") == "winglet":
+                    cb_attach = QComboBox()
+                    cb_attach.addItem("-- select wing --", userData=None)
+                    for tj, tw in enumerate(self.project.wings):
+                        if tj == wi:
+                            continue
+                        cb_attach.addItem(tw.name, userData=tj)
+                    cur_target = getattr(w, "winglet_attach_to_wing", None)
+                    for idx in range(cb_attach.count()):
+                        if cb_attach.itemData(idx) == cur_target:
+                            cb_attach.setCurrentIndex(idx)
+                            break
+                    cb_attach.currentIndexChanged.connect(lambda _i: (None if self.props._block else self._set_winglet_attach_to(wi, cb_attach.currentData())))
+                    self.props.form.addRow("Connect winglet to", cb_attach)
+
+                if getattr(w, "surface_kind", "wing") == "bulk":
+                    tbl = QTableWidget()
+                    tbl.setColumnCount(2)
+                    tbl.setHorizontalHeaderLabels(["Connect", "Wing"])
+                    tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+                    tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+                    rows = [j for j in range(len(self.project.wings)) if j != wi]
+                    tbl.setRowCount(len(rows))
+                    selected = set(getattr(w, "bulk_attach_to_wings", []) or [])
+                    for r, tj in enumerate(rows):
+                        it_chk = QTableWidgetItem()
+                        it_chk.setFlags(Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+                        it_chk.setCheckState(Qt.Checked if tj in selected else Qt.Unchecked)
+                        tbl.setItem(r, 0, it_chk)
+                        it_name = QTableWidgetItem(self.project.wings[tj].name)
+                        it_name.setFlags(Qt.ItemIsEnabled)
+                        it_name.setData(Qt.UserRole, tj)
+                        tbl.setItem(r, 1, it_name)
+                    def _bulk_item_changed(_item):
+                        if self.props._block:
+                            return
+                        chosen = []
+                        for rr in range(tbl.rowCount()):
+                            chk = tbl.item(rr, 0)
+                            nm = tbl.item(rr, 1)
+                            if chk and nm and chk.checkState() == Qt.Checked:
+                                chosen.append(int(nm.data(Qt.UserRole)))
+                        self._set_bulk_attach_to(wi, chosen)
+                    tbl.itemChanged.connect(_bulk_item_changed)
+                    self.props.form.addRow("Connect bulk to wings", tbl)
 
                 wing_geos = [
                     compute_bay_geometry_summary(wb, w.density_kg_m2 if wb.use_wing_density else wb.density_kg_m2)
@@ -1494,6 +1541,64 @@ class MainWindow(QMainWindow):
             return None
         return bay.sections[si]
 
+    def _normalize_surface_links(self):
+        n = len(self.project.wings)
+        for i, w in enumerate(self.project.wings):
+            kind = str(getattr(w, "surface_kind", "wing")).strip().lower()
+            tgt = getattr(w, "winglet_attach_to_wing", None)
+            if isinstance(tgt, int) and (tgt < 0 or tgt >= n or tgt == i):
+                w.winglet_attach_to_wing = None
+            elif not isinstance(tgt, int):
+                w.winglet_attach_to_wing = None
+
+            vals = []
+            for x in (getattr(w, "bulk_attach_to_wings", []) or []):
+                try:
+                    xi = int(x)
+                except Exception:
+                    continue
+                if 0 <= xi < n and xi != i and xi not in vals:
+                    vals.append(xi)
+            w.bulk_attach_to_wings = vals
+
+            if kind != "winglet":
+                w.winglet_attach_to_wing = None
+            if kind != "bulk":
+                w.bulk_attach_to_wings = []
+
+    def _set_winglet_attach_to(self, wi: int, target: Optional[int]):
+        w = self._safe_get_wing(wi)
+        if w is None:
+            return
+        if target is None or target == wi:
+            w.winglet_attach_to_wing = None
+        elif 0 <= int(target) < len(self.project.wings):
+            w.winglet_attach_to_wing = int(target)
+        else:
+            w.winglet_attach_to_wing = None
+        self.rebuild_tree()
+        self.refresh_scene()
+        self.on_tree_selection_changed()
+
+    def _set_bulk_attach_to(self, wi: int, targets: List[int]):
+        w = self._safe_get_wing(wi)
+        if w is None:
+            return
+        keep: List[int] = []
+        for t in targets:
+            try:
+                ti = int(t)
+            except Exception:
+                continue
+            if ti == wi:
+                continue
+            if 0 <= ti < len(self.project.wings) and ti not in keep:
+                keep.append(ti)
+        w.bulk_attach_to_wings = keep
+        self.rebuild_tree()
+        self.refresh_scene()
+        self.on_tree_selection_changed()
+
     def _set_wing_name_from_panel(self, wi: int, name: str):
         wing = self._safe_get_wing(wi)
         if wing is None:
@@ -1588,6 +1693,13 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Surface kind", "A bulk requires at least 2 wings/surfaces in project.")
             return
         self.project.wings[wi].surface_kind = kind
+        if kind == "winglet" and self.project.wings[wi].winglet_attach_to_wing == wi:
+            self.project.wings[wi].winglet_attach_to_wing = None
+        if kind != "winglet":
+            self.project.wings[wi].winglet_attach_to_wing = None
+        if kind != "bulk":
+            self.project.wings[wi].bulk_attach_to_wings = []
+        self._normalize_surface_links()
         for bi in range(len(self.project.wings[wi].bays)):
             self.project.wings[wi].bays[bi].surface_kind = self.project.wings[wi].surface_kind
         self._apply_constraints_to_models()
@@ -1599,7 +1711,7 @@ class MainWindow(QMainWindow):
         b = self._safe_get_bay(wi, bi)
         if b is None:
             return
-        mode = mode.upper().strip()
+        mode = str(mode or "").upper().strip()
         if mode not in ("CTIP", "TAPER"):
             return
         b.tip_chord_mode = mode
@@ -1609,7 +1721,7 @@ class MainWindow(QMainWindow):
             b.taper = (b.c_tip / b.c_root) if b.c_root != 0 else b.taper
         else:
             # derive c_tip
-            b.c_tip = b.taper * b.c_root
+            b.c_tip = max(0.0, float(b.taper)) * float(b.c_root)
         update_default_sections_from_bay(b)
         self.rebuild_tree()
         self.refresh_scene()
@@ -1638,7 +1750,7 @@ class MainWindow(QMainWindow):
             if b.tip_chord_mode.upper() == "CTIP":
                 b.taper = (b.c_tip / b.c_root) if b.c_root != 0 else b.taper
             else:
-                b.c_tip = b.taper * b.c_root
+                b.c_tip = max(0.0, float(b.taper)) * float(b.c_root)
         update_default_sections_from_bay(b)
         self.rebuild_tree()
         self.refresh_scene()
@@ -1834,6 +1946,7 @@ class MainWindow(QMainWindow):
             return
         # Remove wing
         self.project.wings.pop(wi)
+        self._normalize_surface_links()
         # Drop all constraints (indices will be wrong); easiest rebuild by filtering to range after removal
         self._reindex_constraints_after_remove()
         self._apply_constraints_to_models()
@@ -1890,6 +2003,7 @@ class MainWindow(QMainWindow):
                 b.x_le_root, b.y_le_root, b.z_le_root = xt, yt, zt
         w.bays = [b]
         self.project.wings.append(w)
+        self._normalize_surface_links()
         self.rebuild_tree()
         self.refresh_scene()
 

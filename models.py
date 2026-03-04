@@ -91,6 +91,8 @@ class BayModel:
 class WingModel:
     name: str = "Wing"
     surface_kind: str = "wing"  # wing|winglet|bulk|fin|fuselage_top|fuselage_lat
+    winglet_attach_to_wing: Optional[int] = None
+    bulk_attach_to_wings: List[int] = field(default_factory=list)
     density_kg_m2: float = 1.0
     bays: List[BayModel] = field(default_factory=list)
     inertial: InertialData = field(default_factory=InertialData)

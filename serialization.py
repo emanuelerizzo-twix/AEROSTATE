@@ -68,6 +68,8 @@ def project_to_dict(p: Project) -> Dict[str, Any]:
         return {
             "name": w.name,
             "surface_kind": str(getattr(w, "surface_kind", "wing")),
+            "winglet_attach_to_wing": getattr(w, "winglet_attach_to_wing", None),
+            "bulk_attach_to_wings": [int(x) for x in getattr(w, "bulk_attach_to_wings", [])],
             "density_kg_m2": float(w.density_kg_m2),
             "bays": [bay_to(b) for b in w.bays],
             "inertial": inertial_to(w.inertial),
@@ -172,6 +174,8 @@ def project_from_dict(d: Dict[str, Any]) -> Project:
         wm = WingModel(
             name=w.get("name", "Wing"),
             surface_kind=str(w.get("surface_kind", default_kind)),
+            winglet_attach_to_wing=(None if w.get("winglet_attach_to_wing", None) is None else int(w.get("winglet_attach_to_wing"))),
+            bulk_attach_to_wings=[int(x) for x in (w.get("bulk_attach_to_wings", []) or [])],
             density_kg_m2=float(w.get("density_kg_m2", 1.0)),
         )
         wm.bays = bays
