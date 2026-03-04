@@ -90,6 +90,11 @@ class Bay:
         dz = dy * math.tan(math.radians(self.dihedral_deg))
         return dy, dz
 
+    def dihedral_from_yz_deg(self) -> float:
+        """Dihedral angle gamma from YZ components: gamma = atan2(DZ, DY)."""
+        dy, dz = self.dy_dz()
+        return math.degrees(math.atan2(dz, dy))
+
     def dx_le(self) -> float:
         dy, _ = self.dy_dz()
         c_tip = self.c_tip_effective()
@@ -105,6 +110,17 @@ class Bay:
 
     def _dx_te(self) -> float:
         return self.dx_le() + (self.c_tip_effective() - self.c_root)
+
+    def sweep_from_xy_deg(self) -> float:
+        """Sweep angle lambda from XY components: lambda = atan2(DX, DY)."""
+        dy, _ = self.dy_dz()
+        return math.degrees(math.atan2(self.dx_le(), dy))
+
+    def length_3d(self) -> float:
+        """True 3D bay length based on LE displacement vector."""
+        dx = self.dx_le()
+        dy, dz = self.dy_dz()
+        return math.sqrt(dx * dx + dy * dy + dz * dz)
 
     def tip_le(self) -> Tuple[float, float, float]:
         dx = self.dx_le()

@@ -1051,7 +1051,7 @@ class MainWindow(QMainWindow):
                 self.props._add_dspin("z_le_root", b.z_le_root, lambda v: self._set_bay_num(wi, bi, "z_le_root", v), step=0.05)
 
                 # Span/dihedral
-                self.props._add_dspin("span", b.span, lambda v: self._set_bay_num(wi, bi, "span", v), step=0.05)
+                sp_span = self.props._add_dspin("span", b.span, lambda v: self._set_bay_num(wi, bi, "span", v), step=0.05)
                 sp_di = QDoubleSpinBox(); sp_di.setDecimals(6); sp_di.setRange(-1e9, 1e9); sp_di.setSingleStep(0.5); sp_di.setValue(float(b.dihedral_deg))
                 sp_di.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_num(wi, bi, "dihedral_deg", float(v))))
                 slave_flat = self._wing_bay_to_flat(wi, bi)
@@ -1063,6 +1063,48 @@ class MainWindow(QMainWindow):
                     lambda on: self._toggle_var_constraint(slave_flat, ConnectionType.MATCH_DIHEDRAL, on, title="Constraint: dihedral (match)")
                 )
                 self.props.form.addRow("dihedral_deg", wrow)
+
+                # Derived geometry (span interpreted as DY)
+                lbl_l3d = QLabel()
+                lbl_gamma = QLabel()
+                lbl_lambda = QLabel()
+
+                def update_derived_geometry_labels() -> None:
+                    tmp = AvlBay(
+                        x_le_root=b.x_le_root,
+                        y_le_root=b.y_le_root,
+                        z_le_root=b.z_le_root,
+                        c_root=b.c_root,
+                        tip_chord_mode=b.tip_chord_mode,
+                        c_tip=b.c_tip,
+                        taper=b.taper,
+                        span=float(sp_span.value()),
+                        dihedral_deg=float(sp_di.value()),
+                        sweep_mode=b.sweep_mode,
+                        sweep_deg=float(sp_sw.value()),
+                        twist_root_deg=b.twist_root_deg,
+                        twist_tip_deg=b.twist_tip_deg,
+                        rigid_inc_deg=b.rigid_inc_deg,
+                        nchord=b.nchord,
+                        cspace=b.cspace,
+                        nspan=b.nspan,
+                        sspace=b.sspace,
+                    )
+
+                    dy, dz = tmp.dy_dz()
+                    gamma = tmp.dihedral_from_yz_deg()
+                    sweep_xy = tmp.sweep_from_xy_deg()
+                    lbl_l3d.setText(f"{tmp.length_3d():.6g}")
+                    lbl_gamma.setText(f"{gamma:.6g}  (atan2(DZ,DY), DY={dy:.6g}, DZ={dz:.6g})")
+                    lbl_lambda.setText(f"{sweep_xy:.6g}  (atan2(DX,DY))")
+
+                sp_span.valueChanged.connect(lambda _v: update_derived_geometry_labels())
+                sp_di.valueChanged.connect(lambda _v: update_derived_geometry_labels())
+                sp_sw.valueChanged.connect(lambda _v: update_derived_geometry_labels())
+                self.props.form.addRow("L3D", lbl_l3d)
+                self.props.form.addRow("dihedral_yz_deg", lbl_gamma)
+                self.props.form.addRow("sweep_xy_deg", lbl_lambda)
+                update_derived_geometry_labels()
 
                 # Twist
                 sp_tr = QDoubleSpinBox(); sp_tr.setDecimals(6); sp_tr.setRange(-1e9, 1e9); sp_tr.setSingleStep(0.2); sp_tr.setValue(float(b.twist_root_deg))
