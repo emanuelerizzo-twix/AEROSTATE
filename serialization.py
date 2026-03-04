@@ -67,6 +67,7 @@ def project_to_dict(p: Project) -> Dict[str, Any]:
     def wing_to(w: WingModel) -> Dict[str, Any]:
         return {
             "name": w.name,
+            "surface_kind": str(getattr(w, "surface_kind", "wing")),
             "density_kg_m2": float(w.density_kg_m2),
             "bays": [bay_to(b) for b in w.bays],
             "inertial": inertial_to(w.inertial),
@@ -166,8 +167,14 @@ def project_from_dict(d: Dict[str, Any]) -> Project:
         return bm
 
     def wing_from(w: Dict[str, Any]) -> WingModel:
-        wm = WingModel(name=w.get("name", "Wing"), density_kg_m2=float(w.get("density_kg_m2", 1.0)))
-        wm.bays = [bay_from(b) for b in w.get("bays", [])]
+        bays = [bay_from(b) for b in w.get("bays", [])]
+        default_kind = str(bays[0].surface_kind if bays else "wing")
+        wm = WingModel(
+            name=w.get("name", "Wing"),
+            surface_kind=str(w.get("surface_kind", default_kind)),
+            density_kg_m2=float(w.get("density_kg_m2", 1.0)),
+        )
+        wm.bays = bays
         wm.inertial = inertial_from(w.get("inertial", {}))
         wm.aero = AeroPlaceholder(load_cases=dict(w.get("aero", {}).get("load_cases", {})))
         wm.var_opt = varopt_from(w.get("var_opt", {}), wm.var_opt)

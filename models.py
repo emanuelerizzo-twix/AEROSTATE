@@ -90,6 +90,7 @@ class BayModel:
 @dataclass
 class WingModel:
     name: str = "Wing"
+    surface_kind: str = "wing"  # wing|winglet|bulk|fin|fuselage_top|fuselage_lat
     density_kg_m2: float = 1.0
     bays: List[BayModel] = field(default_factory=list)
     inertial: InertialData = field(default_factory=InertialData)
