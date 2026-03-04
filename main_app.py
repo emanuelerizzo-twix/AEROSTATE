@@ -989,13 +989,38 @@ class MainWindow(QMainWindow):
                 b = self.project.wings[wi].bays[bi]
                 self.props.set_title(f"Bay: {self.project.wings[wi].name}/{b.name}")
 
+                tabs = QTabWidget()
+                tabs.setTabPosition(QTabWidget.North)
+                self.props.form.addRow("", tabs)
+
+                tab_inputs = QWidget()
+                form_inputs = QFormLayout(tab_inputs)
+
+                def add_input_dspin(label: str, value: float, on_commit, step: float = 0.05):
+                    sp = QDoubleSpinBox()
+                    sp.setDecimals(6)
+                    sp.setRange(-1e9, 1e9)
+                    sp.setSingleStep(step)
+                    sp.setValue(float(value))
+                    sp.valueChanged.connect(lambda v: (None if self.props._block else on_commit(float(v))))
+                    form_inputs.addRow(label, sp)
+                    return sp
+
+                def add_input_combo(label: str, options, current, on_commit):
+                    cb = QComboBox()
+                    cb.addItems(list(options))
+                    cb.setCurrentText(str(current))
+                    cb.currentTextChanged.connect(lambda t: (None if self.props._block else on_commit(t)))
+                    form_inputs.addRow(label, cb)
+                    return cb
+
                 # Name
                 nm = QLineEdit(b.name)
                 nm.editingFinished.connect(lambda: self._set_bay_name_from_panel(wi, bi, nm.text()))
-                self.props.form.addRow("name", nm)
+                form_inputs.addRow("name", nm)
 
                 # Tip chord mode (CTIP/TAPER)
-                cb_tip = self.props._add_combo("tip_chord_mode", ["CTIP", "TAPER"], b.tip_chord_mode.upper(),
+                cb_tip = add_input_combo("tip_chord_mode", ["CTIP", "TAPER"], b.tip_chord_mode.upper(),
                                               lambda t: self._set_bay_tip_mode(wi, bi, t))
                 # Root chord
                 sp_cr = QDoubleSpinBox(); sp_cr.setDecimals(6); sp_cr.setRange(-1e9, 1e9); sp_cr.setSingleStep(0.05); sp_cr.setValue(float(b.c_root))
@@ -1008,11 +1033,11 @@ class MainWindow(QMainWindow):
                     self._slave_has_constraint(slave_flat, ConnectionType.MATCH_CROOT_CTIP),
                     lambda on: self._toggle_var_constraint(slave_flat, ConnectionType.MATCH_CROOT_CTIP, on, title="Constraint: c_root (slave)=c_tip (master)")
                 )
-                self.props.form.addRow("c_root", wrow)
+                form_inputs.addRow("c_root [m]", wrow)
 
                 # Depending on mode: enable c_tip or taper
-                sp_ct = self.props._add_dspin("c_tip", b.c_tip, lambda v: self._set_bay_num(wi, bi, "c_tip", v), step=0.05)
-                sp_ta = self.props._add_dspin("taper (Ct/Cr)", b.taper, lambda v: self._set_bay_num(wi, bi, "taper", v), step=0.02)
+                sp_ct = add_input_dspin("c_tip [m]", b.c_tip, lambda v: self._set_bay_num(wi, bi, "c_tip", v), step=0.05)
+                sp_ta = add_input_dspin("taper (Ct/Cr) [-]", b.taper, lambda v: self._set_bay_num(wi, bi, "taper", v), step=0.02)
 
                 if b.tip_chord_mode.upper() == "CTIP":
                     sp_ct.setEnabled(True)
@@ -1022,7 +1047,7 @@ class MainWindow(QMainWindow):
                     sp_ta.setEnabled(True)
 
                 # Sweep mode (LE/C4/TE) + sweep angle
-                self.props._add_combo("sweep_mode", ["LE", "C4", "TE"], b.sweep_mode.upper(),
+                add_input_combo("sweep_mode", ["LE", "C4", "TE"], b.sweep_mode.upper(),
                                      lambda t: self._set_bay_mode(wi, bi, "sweep_mode", t))
                 sp_sw = QDoubleSpinBox(); sp_sw.setDecimals(6); sp_sw.setRange(-1e9, 1e9); sp_sw.setSingleStep(0.5); sp_sw.setValue(float(b.sweep_deg))
                 sp_sw.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_num(wi, bi, "sweep_deg", float(v))))
@@ -1048,7 +1073,7 @@ class MainWindow(QMainWindow):
                     constrained_sw,
                     lambda on: self._toggle_var_constraint(slave_flat, ctype_sw, on, title="Constraint: sweep_deg (match sweep)")
                 )
-                self.props.form.addRow("sweep_deg", wrow)
+                form_inputs.addRow("sweep_deg [deg]", wrow)
 
                 # Position LE root
                 sp_x = QDoubleSpinBox(); sp_x.setDecimals(6); sp_x.setRange(-1e9, 1e9); sp_x.setSingleStep(0.05); sp_x.setValue(float(b.x_le_root))
@@ -1061,12 +1086,12 @@ class MainWindow(QMainWindow):
                     self._slave_has_constraint(slave_flat, ConnectionType.LOCK_LE),
                     lambda on: self._toggle_var_constraint(slave_flat, ConnectionType.LOCK_LE, on, title="Constraint: LOCK_LE (same root LE point)")
                 )
-                self.props.form.addRow("x_le_root", wrow)
-                self.props._add_dspin("y_le_root", b.y_le_root, lambda v: self._set_bay_num(wi, bi, "y_le_root", v), step=0.05)
-                self.props._add_dspin("z_le_root", b.z_le_root, lambda v: self._set_bay_num(wi, bi, "z_le_root", v), step=0.05)
+                form_inputs.addRow("x_le_root [m]", wrow)
+                add_input_dspin("y_le_root [m]", b.y_le_root, lambda v: self._set_bay_num(wi, bi, "y_le_root", v), step=0.05)
+                add_input_dspin("z_le_root [m]", b.z_le_root, lambda v: self._set_bay_num(wi, bi, "z_le_root", v), step=0.05)
 
                 # Span/dihedral
-                sp_span = self.props._add_dspin("span", b.span, lambda v: self._set_bay_num(wi, bi, "span", v), step=0.05)
+                sp_span = add_input_dspin("span [m]", b.span, lambda v: self._set_bay_num(wi, bi, "span", v), step=0.05)
                 sp_di = QDoubleSpinBox(); sp_di.setDecimals(6); sp_di.setRange(-1e9, 1e9); sp_di.setSingleStep(0.5); sp_di.setValue(float(b.dihedral_deg))
                 sp_di.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_num(wi, bi, "dihedral_deg", float(v))))
                 slave_flat = self._wing_bay_to_flat(wi, bi)
@@ -1077,7 +1102,7 @@ class MainWindow(QMainWindow):
                     self._slave_has_constraint(slave_flat, ConnectionType.MATCH_DIHEDRAL),
                     lambda on: self._toggle_var_constraint(slave_flat, ConnectionType.MATCH_DIHEDRAL, on, title="Constraint: dihedral (match)")
                 )
-                self.props.form.addRow("dihedral_deg", wrow)
+                form_inputs.addRow("dihedral_deg [deg]", wrow)
 
                 # Derived geometry (span interpreted as DY)
                 lbl_l3d = QLabel()
@@ -1116,9 +1141,9 @@ class MainWindow(QMainWindow):
                 sp_span.valueChanged.connect(lambda _v: update_derived_geometry_labels())
                 sp_di.valueChanged.connect(lambda _v: update_derived_geometry_labels())
                 sp_sw.valueChanged.connect(lambda _v: update_derived_geometry_labels())
-                self.props.form.addRow("L3D", lbl_l3d)
-                self.props.form.addRow("dihedral_yz_deg", lbl_gamma)
-                self.props.form.addRow("sweep_xy_deg", lbl_lambda)
+                form_inputs.addRow("L3D [m]", lbl_l3d)
+                form_inputs.addRow("dihedral_yz_deg [deg]", lbl_gamma)
+                form_inputs.addRow("sweep_xy_deg [deg]", lbl_lambda)
                 update_derived_geometry_labels()
 
                 # Twist
@@ -1132,9 +1157,9 @@ class MainWindow(QMainWindow):
                     self._slave_has_constraint(slave_flat, ConnectionType.MATCH_TWIST),
                     lambda on: self._toggle_var_constraint(slave_flat, ConnectionType.MATCH_TWIST, on, title="Constraint: twist (match)")
                 )
-                self.props.form.addRow("twist_root_deg", wrow)
-                self.props._add_dspin("twist_tip_deg", b.twist_tip_deg, lambda v: self._set_bay_num(wi, bi, "twist_tip_deg", v), step=0.2)
-                self.props._add_dspin("rigid_inc_deg", b.rigid_inc_deg, lambda v: self._set_bay_num(wi, bi, "rigid_inc_deg", v), step=0.2)
+                form_inputs.addRow("twist_root_deg [deg]", wrow)
+                add_input_dspin("twist_tip_deg [deg]", b.twist_tip_deg, lambda v: self._set_bay_num(wi, bi, "twist_tip_deg", v), step=0.2)
+                add_input_dspin("rigid_inc_deg [deg]", b.rigid_inc_deg, lambda v: self._set_bay_num(wi, bi, "rigid_inc_deg", v), step=0.2)
 
 
                 # Root/Tip sections (theta + airfoil) moved from tree to Properties
@@ -1152,8 +1177,8 @@ class MainWindow(QMainWindow):
                 sp_th_r.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_num(wi, bi, "twist_root_deg", float(v) - b.rigid_inc_deg)))
                 sp_th_t.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_num(wi, bi, "twist_tip_deg", float(v) - b.rigid_inc_deg)))
 
-                self.props.form.addRow("section.theta_root_deg", sp_th_r)
-                self.props.form.addRow("section.theta_tip_deg", sp_th_t)
+                form_inputs.addRow("section.theta_root_deg [deg]", sp_th_r)
+                form_inputs.addRow("section.theta_tip_deg [deg]", sp_th_t)
 
                 # Airfoil editors: format "NACA:2412" or "FILE:path"
                 def airfoil_to_str(a: AirfoilRef) -> str:
@@ -1190,14 +1215,8 @@ class MainWindow(QMainWindow):
                     ed_af_r.editingFinished.connect(lambda: self._set_section_airfoil(wi, bi, True, ed_af_r.text()))
                 ed_af_t.editingFinished.connect(lambda: self._set_section_airfoil(wi, bi, False, ed_af_t.text()))
 
-                self.props.form.addRow("section.airfoil_root", ed_af_r)
-                self.props.form.addRow("section.airfoil_tip", ed_af_t)
-
-                tabs = QTabWidget()
-                tabs.setTabPosition(QTabWidget.North)
-
-                tab_inputs = QWidget()
-                form_inputs = QFormLayout(tab_inputs)
+                form_inputs.addRow("section.airfoil_root", ed_af_r)
+                form_inputs.addRow("section.airfoil_tip", ed_af_t)
 
                 sp_nchord = QSpinBox(); sp_nchord.setRange(0, 10**9); sp_nchord.setSingleStep(1); sp_nchord.setValue(int(b.nchord))
                 sp_nspan = QSpinBox(); sp_nspan.setRange(0, 10**9); sp_nspan.setSingleStep(1); sp_nspan.setValue(int(b.nspan))
@@ -1307,10 +1326,9 @@ class MainWindow(QMainWindow):
                 btn_add_mass.clicked.connect(lambda: self._add_bay_concentrated_mass(wi, bi))
                 btn_del_mass.clicked.connect(lambda: self._remove_selected_bay_concentrated_mass(wi, bi, table.currentRow()))
 
-                tabs.addTab(tab_inputs, "Inputs")
+                tabs.addTab(tab_inputs, "INPUT")
                 tabs.addTab(tab_geom, "GEO/Inertias")
                 tabs.addTab(tab_masses, "Concentrated Masses")
-                self.props.form.addRow("", tabs)
 
         finally:
             self.props._block = False
