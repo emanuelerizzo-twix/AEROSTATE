@@ -70,6 +70,9 @@ class BayModel:
     sspace: float = 1.0
 
     controls: List[ControlSurface] = field(default_factory=list)
+    use_wing_density: bool = True
+    density_kg_m2: float = 1.0
+    concentrated_masses: List["ConcentratedMass"] = field(default_factory=list)
     inertial: InertialData = field(default_factory=InertialData)
     aero: AeroPlaceholder = field(default_factory=AeroPlaceholder)
     sections: List[SectionModel] = field(default_factory=list)
@@ -87,6 +90,7 @@ class BayModel:
 @dataclass
 class WingModel:
     name: str = "Wing"
+    density_kg_m2: float = 1.0
     bays: List[BayModel] = field(default_factory=list)
     inertial: InertialData = field(default_factory=InertialData)
     aero: AeroPlaceholder = field(default_factory=AeroPlaceholder)
@@ -98,3 +102,11 @@ class Project:
     wings: List[WingModel] = field(default_factory=list)
     connections: List[BayConnection] = field(default_factory=list)
     filepath: Optional[str] = None
+
+
+@dataclass
+class ConcentratedMass:
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    mass: float = 0.0

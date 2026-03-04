@@ -4,7 +4,7 @@ from dataclasses import asdict
 from typing import Any, Dict
 
 from avl_export import AirfoilRef, BayConnection, ConnectionType, ControlSurface
-from models import AeroPlaceholder, BayModel, InertialData, Project, SectionModel, VarMeta, WingModel
+from models import AeroPlaceholder, BayModel, ConcentratedMass, InertialData, Project, SectionModel, VarMeta, WingModel
 
 
 def _airfoil_to_dict(a: AirfoilRef) -> Dict[str, Any]:
@@ -52,6 +52,12 @@ def project_to_dict(p: Project) -> Dict[str, Any]:
             "rigid_inc_deg": b.rigid_inc_deg,
             "nchord": b.nchord, "cspace": b.cspace, "nspan": b.nspan, "sspace": b.sspace,
             "controls": [control_to(c) for c in b.controls],
+            "use_wing_density": bool(b.use_wing_density),
+            "density_kg_m2": float(b.density_kg_m2),
+            "concentrated_masses": [
+                {"x": float(cm.x), "y": float(cm.y), "z": float(cm.z), "mass": float(cm.mass)}
+                for cm in b.concentrated_masses
+            ],
             "sections": [section_to(s) for s in b.sections],
             "inertial": inertial_to(b.inertial),
             "aero": {"load_cases": b.aero.load_cases},
@@ -61,6 +67,7 @@ def project_to_dict(p: Project) -> Dict[str, Any]:
     def wing_to(w: WingModel) -> Dict[str, Any]:
         return {
             "name": w.name,
+            "density_kg_m2": float(w.density_kg_m2),
             "bays": [bay_to(b) for b in w.bays],
             "inertial": inertial_to(w.inertial),
             "aero": {"load_cases": w.aero.load_cases},
@@ -139,8 +146,19 @@ def project_from_dict(d: Dict[str, Any]) -> Project:
             cspace=float(b.get("cspace", 1.0)),
             nspan=int(b.get("nspan", 20)),
             sspace=float(b.get("sspace", 1.0)),
+            use_wing_density=bool(b.get("use_wing_density", True)),
+            density_kg_m2=float(b.get("density_kg_m2", 1.0)),
         )
         bm.controls = [control_from(c) for c in b.get("controls", [])]
+        bm.concentrated_masses = [
+            ConcentratedMass(
+                x=float(cm.get("x", 0.0)),
+                y=float(cm.get("y", 0.0)),
+                z=float(cm.get("z", 0.0)),
+                mass=float(cm.get("mass", 0.0)),
+            )
+            for cm in b.get("concentrated_masses", [])
+        ]
         bm.sections = [section_from(s) for s in b.get("sections", [])]
         bm.inertial = inertial_from(b.get("inertial", {}))
         bm.aero = AeroPlaceholder(load_cases=dict(b.get("aero", {}).get("load_cases", {})))
@@ -148,7 +166,7 @@ def project_from_dict(d: Dict[str, Any]) -> Project:
         return bm
 
     def wing_from(w: Dict[str, Any]) -> WingModel:
-        wm = WingModel(name=w.get("name", "Wing"))
+        wm = WingModel(name=w.get("name", "Wing"), density_kg_m2=float(w.get("density_kg_m2", 1.0)))
         wm.bays = [bay_from(b) for b in w.get("bays", [])]
         wm.inertial = inertial_from(w.get("inertial", {}))
         wm.aero = AeroPlaceholder(load_cases=dict(w.get("aero", {}).get("load_cases", {})))

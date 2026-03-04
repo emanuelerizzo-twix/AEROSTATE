@@ -13,7 +13,8 @@ from PySide6.QtWidgets import (
     QTreeWidget, QTreeWidgetItem, QFileDialog, QMessageBox, QFormLayout,
     QLineEdit, QComboBox, QPushButton, QLabel, QFrame, QMenu,
     QDialog, QDialogButtonBox, QSizeGrip,
-    QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox
+    QSpinBox, QDoubleSpinBox, QCheckBox, QGroupBox,
+    QTabWidget, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 )
 
 import vtk
@@ -28,9 +29,12 @@ from avl_export import (
 # -----------------------------
 # Data model / serialization / geometry helpers (modularized)
 # -----------------------------
-from models import VarMeta, InertialData, AeroPlaceholder, SectionModel, BayModel, WingModel, Project
+from models import VarMeta, InertialData, AeroPlaceholder, SectionModel, BayModel, WingModel, Project, ConcentratedMass
 from serialization import project_to_dict, project_from_dict
-from geometry import update_default_sections_from_bay, baymodel_to_avlbay
+from geometry import (
+    update_default_sections_from_bay, baymodel_to_avlbay,
+    compute_bay_geometry_summary, combine_geometry_summaries,
+)
 from constraints import flatten_bays as flatten_project_bays, flat_bay_names as project_flat_bay_names, apply_constraints_to_project
 
 # -----------------------------
@@ -948,6 +952,9 @@ class MainWindow(QMainWindow):
                 name_edit = QLineEdit(w.name)
                 name_edit.editingFinished.connect(lambda: self._set_wing_name_from_panel(wi, name_edit.text()))
                 self.props.form.addRow("name", name_edit)
+                sp_wd = QDoubleSpinBox(); sp_wd.setDecimals(6); sp_wd.setRange(0.0, 1e9); sp_wd.setSingleStep(0.05); sp_wd.setValue(float(w.density_kg_m2))
+                sp_wd.valueChanged.connect(lambda v: (None if self.props._block else self._set_wing_density(wi, float(v))))
+                self.props.form.addRow("density_kg_m2", sp_wd)
                 # Add bay
                 btn = QPushButton("Add bay to this wing")
                 btn.clicked.connect(lambda: self._add_bay_to_wing_index(wi))
@@ -1182,6 +1189,93 @@ class MainWindow(QMainWindow):
                 self.props._add_spin("nchord", b.nchord, lambda v: self._set_bay_int(wi, bi, "nchord", v), step=1)
                 self.props._add_spin("nspan", b.nspan, lambda v: self._set_bay_int(wi, bi, "nspan", v), step=1)
 
+                tabs = QTabWidget()
+
+                tab_geom = QWidget()
+                form_geom = QFormLayout(tab_geom)
+                chk_use_wing_density = QCheckBox("Usa densità ala")
+                chk_use_wing_density.setChecked(bool(b.use_wing_density))
+                sp_bd = QDoubleSpinBox(); sp_bd.setDecimals(6); sp_bd.setRange(0.0, 1e9); sp_bd.setSingleStep(0.05)
+                sp_bd.setValue(float(b.density_kg_m2))
+                sp_bd.setEnabled(not b.use_wing_density)
+                chk_use_wing_density.toggled.connect(lambda on: (None if self.props._block else self._set_bay_use_wing_density(wi, bi, bool(on))))
+                sp_bd.valueChanged.connect(lambda v: (None if self.props._block else self._set_bay_density(wi, bi, float(v))))
+                form_geom.addRow("", chk_use_wing_density)
+                form_geom.addRow("density_kg_m2", sp_bd)
+
+                wing = self.project.wings[wi]
+                bay_density = wing.density_kg_m2 if b.use_wing_density else b.density_kg_m2
+                bay_geo = compute_bay_geometry_summary(b, bay_density)
+                wing_geos = [
+                    compute_bay_geometry_summary(wb, wing.density_kg_m2 if wb.use_wing_density else wb.density_kg_m2)
+                    for wb in wing.bays
+                ]
+                wing_geo = combine_geometry_summaries(wing_geos)
+
+                form_geom.addRow("--- Baia selezionata ---", QLabel(""))
+                form_geom.addRow("Superficie [m2]", QLabel(f"{bay_geo.area:.6g}"))
+                form_geom.addRow("CMA [m]", QLabel(f"{bay_geo.cma:.6g}"))
+                form_geom.addRow("CMG [m]", QLabel(f"{bay_geo.cmg:.6g}"))
+                form_geom.addRow("Massa [kg]", QLabel(f"{bay_geo.mass:.6g}"))
+                form_geom.addRow("Baricentro X [m]", QLabel(f"{bay_geo.cg[0]:.6g}"))
+                form_geom.addRow("Baricentro Y [m]", QLabel(f"{bay_geo.cg[1]:.6g}"))
+                form_geom.addRow("Baricentro Z [m]", QLabel(f"{bay_geo.cg[2]:.6g}"))
+
+                form_geom.addRow("--- Ala intera ---", QLabel(""))
+                form_geom.addRow("Superficie ala [m2]", QLabel(f"{wing_geo.area:.6g}"))
+                form_geom.addRow("CMA ala [m]", QLabel(f"{wing_geo.cma:.6g}"))
+                form_geom.addRow("CMG ala [m]", QLabel(f"{wing_geo.cmg:.6g}"))
+                form_geom.addRow("Massa ala [kg]", QLabel(f"{wing_geo.mass:.6g}"))
+                form_geom.addRow("Baricentro ala X [m]", QLabel(f"{wing_geo.cg[0]:.6g}"))
+                form_geom.addRow("Baricentro ala Y [m]", QLabel(f"{wing_geo.cg[1]:.6g}"))
+                form_geom.addRow("Baricentro ala Z [m]", QLabel(f"{wing_geo.cg[2]:.6g}"))
+
+                tab_masses = QWidget()
+                lay_mass = QVBoxLayout(tab_masses)
+                table = QTableWidget(len(b.concentrated_masses), 4)
+                table.setHorizontalHeaderLabels(["X", "Y", "Z", "Massa [kg]"])
+                table.verticalHeader().setVisible(False)
+                table.setSelectionBehavior(QAbstractItemView.SelectRows)
+                table.setSelectionMode(QAbstractItemView.SingleSelection)
+                table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+                for r, cm in enumerate(b.concentrated_masses):
+                    table.setItem(r, 0, QTableWidgetItem(f"{cm.x:.6g}"))
+                    table.setItem(r, 1, QTableWidgetItem(f"{cm.y:.6g}"))
+                    table.setItem(r, 2, QTableWidgetItem(f"{cm.z:.6g}"))
+                    table.setItem(r, 3, QTableWidgetItem(f"{cm.mass:.6g}"))
+
+                def _on_mass_cell_changed(_row: int, _col: int):
+                    if self.props._block:
+                        return
+                    new_list: List[ConcentratedMass] = []
+                    for rr in range(table.rowCount()):
+                        vals = []
+                        for cc in range(4):
+                            itv = table.item(rr, cc)
+                            try:
+                                vals.append(float(itv.text()) if itv else 0.0)
+                            except Exception:
+                                vals.append(0.0)
+                        new_list.append(ConcentratedMass(x=vals[0], y=vals[1], z=vals[2], mass=vals[3]))
+                    self._set_bay_concentrated_masses(wi, bi, new_list)
+
+                table.cellChanged.connect(_on_mass_cell_changed)
+                lay_mass.addWidget(table)
+
+                row_btn = QHBoxLayout()
+                btn_add_mass = QPushButton("Aggiungi massa")
+                btn_del_mass = QPushButton("Rimuovi selezionata")
+                row_btn.addWidget(btn_add_mass)
+                row_btn.addWidget(btn_del_mass)
+                row_btn.addStretch(1)
+                lay_mass.addLayout(row_btn)
+
+                btn_add_mass.clicked.connect(lambda: self._add_bay_concentrated_mass(wi, bi))
+                btn_del_mass.clicked.connect(lambda: self._remove_selected_bay_concentrated_mass(wi, bi, table.currentRow()))
+
+                tabs.addTab(tab_geom, "Geometria")
+                tabs.addTab(tab_masses, "Masse concentrate")
+                self.props.form.addRow("", tabs)
 
         finally:
             self.props._block = False
@@ -1293,6 +1387,32 @@ class MainWindow(QMainWindow):
         b.name = (name.strip() or b.name)
         self.rebuild_tree()
         self.refresh_scene()
+
+    def _set_wing_density(self, wi: int, density: float):
+        self.project.wings[wi].density_kg_m2 = max(0.0, float(density))
+        self.on_tree_selection_changed()
+
+    def _set_bay_use_wing_density(self, wi: int, bi: int, on: bool):
+        self.project.wings[wi].bays[bi].use_wing_density = bool(on)
+        self.on_tree_selection_changed()
+
+    def _set_bay_density(self, wi: int, bi: int, density: float):
+        self.project.wings[wi].bays[bi].density_kg_m2 = max(0.0, float(density))
+        self.on_tree_selection_changed()
+
+    def _set_bay_concentrated_masses(self, wi: int, bi: int, masses: List[ConcentratedMass]):
+        self.project.wings[wi].bays[bi].concentrated_masses = list(masses)
+        self.on_tree_selection_changed()
+
+    def _add_bay_concentrated_mass(self, wi: int, bi: int):
+        self.project.wings[wi].bays[bi].concentrated_masses.append(ConcentratedMass())
+        self.on_tree_selection_changed()
+
+    def _remove_selected_bay_concentrated_mass(self, wi: int, bi: int, row: int):
+        b = self.project.wings[wi].bays[bi]
+        if 0 <= row < len(b.concentrated_masses):
+            b.concentrated_masses.pop(row)
+            self.on_tree_selection_changed()
 
     def _set_bay_tip_mode(self, wi: int, bi: int, mode: str):
         b = self.project.wings[wi].bays[bi]

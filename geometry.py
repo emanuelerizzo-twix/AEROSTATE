@@ -1,7 +1,19 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Iterable, Tuple
+
 from avl_export import AirfoilRef, Bay as AvlBay
 from models import BayModel, SectionModel
+
+
+@dataclass
+class GeometrySummary:
+    area: float
+    cma: float
+    cmg: float
+    mass: float
+    cg: Tuple[float, float, float]
 
 
 def update_default_sections_from_bay(b: BayModel) -> None:
@@ -50,3 +62,58 @@ def baymodel_to_avlbay(b: BayModel) -> AvlBay:
     )
     avb.controls = list(b.controls)
     return avb
+
+
+def compute_bay_geometry_summary(b: BayModel, density_kg_m2: float) -> GeometrySummary:
+    avb = baymodel_to_avlbay(b)
+    c_root = float(avb.c_root)
+    c_tip = float(avb.c_tip_effective())
+    dy, dz = avb.dy_dz()
+    dy_abs = abs(dy)
+
+    area = dy_abs * (c_root + c_tip) * 0.5
+    cmg = (area / dy_abs) if dy_abs > 1e-12 else 0.0
+
+    lam = (c_tip / c_root) if abs(c_root) > 1e-12 else 0.0
+    if (1.0 + lam) > 1e-12:
+        cma = (2.0 / 3.0) * c_root * (1.0 + lam + lam * lam) / (1.0 + lam)
+        eta_bar = (1.0 + 2.0 * lam) / (3.0 * (1.0 + lam))
+    else:
+        cma = 0.0
+        eta_bar = 0.0
+
+    i1 = c_root * (1.0 + lam) * 0.5
+    i_eta_c = c_root * (1.0 + 2.0 * lam) / 6.0
+    i_c2 = (c_root * c_root) * (1.0 + lam + lam * lam) / 3.0
+
+    x = avb.x_le_root
+    if abs(i1) > 1e-12:
+        x = (avb.x_le_root * i1 + avb.dx_le() * i_eta_c + 0.5 * i_c2) / i1
+    y = avb.y_le_root + dy * eta_bar
+    z = avb.z_le_root + dz * eta_bar
+
+    mass = max(0.0, float(density_kg_m2)) * max(0.0, area)
+    return GeometrySummary(area=max(0.0, area), cma=cma, cmg=cmg, mass=mass, cg=(x, y, z))
+
+
+def combine_geometry_summaries(items: Iterable[GeometrySummary]) -> GeometrySummary:
+    values = list(items)
+    total_area = 0.0
+    total_cma_weight = 0.0
+    total_mass = 0.0
+    sx = sy = sz = 0.0
+    total_span = 0.0
+    for it in values:
+        total_area += it.area
+        total_cma_weight += it.cma * it.area
+        total_mass += it.mass
+        sx += it.cg[0] * it.mass
+        sy += it.cg[1] * it.mass
+        sz += it.cg[2] * it.mass
+        if it.cmg > 1e-12:
+            total_span += it.area / it.cmg
+
+    cmg = (total_area / total_span) if total_span > 1e-12 else 0.0
+    cma = (total_cma_weight / total_area) if total_area > 1e-12 else 0.0
+    cg = (sx / total_mass, sy / total_mass, sz / total_mass) if total_mass > 1e-12 else (0.0, 0.0, 0.0)
+    return GeometrySummary(area=total_area, cma=cma, cmg=cmg, mass=total_mass, cg=cg)
