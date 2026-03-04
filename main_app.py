@@ -1412,7 +1412,9 @@ class MainWindow(QMainWindow):
         return 0
 
     def _set_opt_flag_bay(self, wi: int, bi: int, varname: str, on: bool):
-        b = self.project.wings[wi].bays[bi]
+        b = self._safe_get_bay(wi, bi)
+        if b is None:
+            return
         if varname in b.var_opt:
             b.var_opt[varname].optimize = bool(on)
         self.rebuild_tree()
@@ -1463,34 +1465,10 @@ class MainWindow(QMainWindow):
         self.refresh_scene()
         self.on_tree_selection_changed()
 
-        names = self._flat_bay_names()
-        default_master = getattr(self, "_last_connect_master", 0)
-        dlg = VarConstraintDialog(self, names, default_master, slave_flat, title)
-        if dlg.exec() != QDialog.Accepted:
-            # revert UI state
-            self.on_tree_selection_changed()
-            return
-        master = dlg.master_index()
-        if master == slave_flat:
-            QMessageBox.warning(self, "Constraint", "Master and Slave must be different.")
-            self.on_tree_selection_changed()
-            return
-
-        # handle sweep exclusivity when setting sweep constraint
-        if ctype in (ConnectionType.MATCH_SWEEP, ConnectionType.MATCH_SWEEP_LE, ConnectionType.MATCH_SWEEP_TE):
-            self._remove_constraint_type_for_slave(slave_flat, ConnectionType.MATCH_SWEEP)
-            self._remove_constraint_type_for_slave(slave_flat, ConnectionType.MATCH_SWEEP_LE)
-            self._remove_constraint_type_for_slave(slave_flat, ConnectionType.MATCH_SWEEP_TE)
-
-        self._set_constraint_type_for_slave(slave_flat, ctype, master)
-        self._last_connect_master = master
-        self._last_connect_slave = slave_flat
-        self._apply_constraints_to_models()
-        self.rebuild_tree()
-        self.refresh_scene()
-        self.on_tree_selection_changed()
-        self.on_tree_selection_changed()
-
+    def _flat_to_wing_bay(self, flat_idx: int) -> Tuple[Optional[int], Optional[int]]:
+        """Return (wing_idx, bay_idx) for a flattened bay index, or (None, None)."""
+        if flat_idx < 0:
+            return None, None
         k = 0
         for wi, w in enumerate(self.project.wings):
             for bi, _b in enumerate(w.bays):
@@ -1499,42 +1477,84 @@ class MainWindow(QMainWindow):
                 k += 1
         return None, None
 
+    def _safe_get_wing(self, wi: int) -> Optional[WingModel]:
+        if wi < 0 or wi >= len(self.project.wings):
+            return None
+        return self.project.wings[wi]
+
+    def _safe_get_bay(self, wi: int, bi: int) -> Optional[BayModel]:
+        wing = self._safe_get_wing(wi)
+        if wing is None or bi < 0 or bi >= len(wing.bays):
+            return None
+        return wing.bays[bi]
+
+    def _safe_get_section(self, wi: int, bi: int, si: int) -> Optional[SectionModel]:
+        bay = self._safe_get_bay(wi, bi)
+        if bay is None or si < 0 or si >= len(bay.sections):
+            return None
+        return bay.sections[si]
+
     def _set_wing_name_from_panel(self, wi: int, name: str):
-        self.project.wings[wi].name = (name.strip() or self.project.wings[wi].name)
+        wing = self._safe_get_wing(wi)
+        if wing is None:
+            return
+        wing.name = (name.strip() or wing.name)
         self.rebuild_tree()
         self.refresh_scene()
 
     def _set_bay_name_from_panel(self, wi: int, bi: int, name: str):
-        b = self.project.wings[wi].bays[bi]
+        b = self._safe_get_bay(wi, bi)
+        if b is None:
+            return
         b.name = (name.strip() or b.name)
         self.rebuild_tree()
         self.refresh_scene()
 
     def _set_wing_density(self, wi: int, density: float):
-        self.project.wings[wi].density_kg_m2 = max(0.0, float(density))
+        wing = self._safe_get_wing(wi)
+        if wing is None:
+            return
+        wing.density_kg_m2 = max(0.0, float(density))
         QTimer.singleShot(0, self.on_tree_selection_changed)
 
     def _set_bay_use_wing_density(self, wi: int, bi: int, on: bool):
-        self.project.wings[wi].bays[bi].use_wing_density = bool(on)
+        bay = self._safe_get_bay(wi, bi)
+        if bay is None:
+            return
+        bay.use_wing_density = bool(on)
         QTimer.singleShot(0, self.on_tree_selection_changed)
 
     def _set_bay_density(self, wi: int, bi: int, density: float):
-        self.project.wings[wi].bays[bi].density_kg_m2 = max(0.0, float(density))
+        bay = self._safe_get_bay(wi, bi)
+        if bay is None:
+            return
+        bay.density_kg_m2 = max(0.0, float(density))
         QTimer.singleShot(0, self.on_tree_selection_changed)
 
     def _set_wing_inertial_num(self, wi: int, attr: str, val: float):
-        inert = self.project.wings[wi].inertial
+        wing = self._safe_get_wing(wi)
+        if wing is None:
+            return
+        inert = wing.inertial
         setattr(inert, attr, float(val))
 
     def _set_bay_concentrated_masses(self, wi: int, bi: int, masses: List[ConcentratedMass]):
-        self.project.wings[wi].bays[bi].concentrated_masses = list(masses)
+        bay = self._safe_get_bay(wi, bi)
+        if bay is None:
+            return
+        bay.concentrated_masses = list(masses)
 
     def _add_bay_concentrated_mass(self, wi: int, bi: int):
-        self.project.wings[wi].bays[bi].concentrated_masses.append(ConcentratedMass())
+        bay = self._safe_get_bay(wi, bi)
+        if bay is None:
+            return
+        bay.concentrated_masses.append(ConcentratedMass())
         self.on_tree_selection_changed()
 
     def _remove_checked_bay_concentrated_masses(self, wi: int, bi: int, table: QTableWidget):
-        b = self.project.wings[wi].bays[bi]
+        b = self._safe_get_bay(wi, bi)
+        if b is None:
+            return
         keep: List[ConcentratedMass] = []
         for r, cm in enumerate(b.concentrated_masses):
             it = table.item(r, 0)
@@ -1576,7 +1596,9 @@ class MainWindow(QMainWindow):
         self.on_tree_selection_changed()
 
     def _set_bay_tip_mode(self, wi: int, bi: int, mode: str):
-        b = self.project.wings[wi].bays[bi]
+        b = self._safe_get_bay(wi, bi)
+        if b is None:
+            return
         mode = mode.upper().strip()
         if mode not in ("CTIP", "TAPER"):
             return
@@ -1595,7 +1617,9 @@ class MainWindow(QMainWindow):
         self.on_tree_selection_changed()
 
     def _set_bay_mode(self, wi: int, bi: int, attr: str, val: str):
-        b = self.project.wings[wi].bays[bi]
+        b = self._safe_get_bay(wi, bi)
+        if b is None:
+            return
         if attr == "surface_kind":
             self._set_bay_surface_kind(wi, bi, val)
             return
@@ -1605,7 +1629,9 @@ class MainWindow(QMainWindow):
         self.refresh_scene()
 
     def _set_bay_num(self, wi: int, bi: int, attr: str, val: float):
-        b = self.project.wings[wi].bays[bi]
+        b = self._safe_get_bay(wi, bi)
+        if b is None:
+            return
         setattr(b, attr, float(val))
         # Maintain Ct/taper coherence
         if attr in ("c_root", "c_tip", "taper", "tip_chord_mode"):
@@ -1618,14 +1644,18 @@ class MainWindow(QMainWindow):
         self.refresh_scene()
 
     def _set_bay_int(self, wi: int, bi: int, attr: str, val: int):
-        b = self.project.wings[wi].bays[bi]
+        b = self._safe_get_bay(wi, bi)
+        if b is None:
+            return
         setattr(b, attr, int(val))
         update_default_sections_from_bay(b)
         self.rebuild_tree()
         self.refresh_scene()
 
     def _set_section_airfoil(self, wi: int, bi: int, is_root: bool, text: str):
-        b = self.project.wings[wi].bays[bi]
+        b = self._safe_get_bay(wi, bi)
+        if b is None:
+            return
         update_default_sections_from_bay(b)
         s = b.sections[0] if is_root else b.sections[-1]
 
@@ -1656,22 +1686,33 @@ class MainWindow(QMainWindow):
 
         if kind == "wing" and col == 1:
             wi = tag[1]
-            self.project.wings[wi].name = item.text(1).strip() or self.project.wings[wi].name
+            wing = self._safe_get_wing(wi)
+            if wing is None:
+                return
+            wing.name = item.text(1).strip() or wing.name
             return
 
         if kind == "bay" and col == 1:
             wi, bi = tag[1], tag[2]
-            self.project.wings[wi].bays[bi].name = item.text(1).strip() or self.project.wings[wi].bays[bi].name
+            bay = self._safe_get_bay(wi, bi)
+            if bay is None:
+                return
+            bay.name = item.text(1).strip() or bay.name
             return
 
         if kind == "section" and col == 1:
             wi, bi, si = tag[1], tag[2], tag[3]
-            self.project.wings[wi].bays[bi].sections[si].name = item.text(1).strip() or self.project.wings[wi].bays[bi].sections[si].name
+            section = self._safe_get_section(wi, bi, si)
+            if section is None:
+                return
+            section.name = item.text(1).strip() or section.name
             return
 
         if kind == "bay_var":
             wi, bi, varname = tag[1], tag[2], tag[3]
-            b = self.project.wings[wi].bays[bi]
+            b = self._safe_get_bay(wi, bi)
+            if b is None:
+                return
             if col == 1:
                 txt = item.text(1).strip()
                 try:
@@ -1689,7 +1730,9 @@ class MainWindow(QMainWindow):
 
         if kind == "section_var":
             wi, bi, si, varname = tag[1], tag[2], tag[3], tag[4]
-            s = self.project.wings[wi].bays[bi].sections[si]
+            s = self._safe_get_section(wi, bi, si)
+            if s is None:
+                return
             if col == 1:
                 if varname == "airfoil":
                     t = item.text(1).strip()
