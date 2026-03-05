@@ -165,6 +165,8 @@ class CameraOverlay(QFrame):
         super().mouseReleaseEvent(e)
 
 class VTKCadView(QWidget):
+    gridPointClicked = Signal(float, float, float)
+
     def __init__(self, get_ordered_bays_fn):
         super().__init__()
         self.get_ordered_bays_fn = get_ordered_bays_fn
@@ -197,8 +199,13 @@ class VTKCadView(QWidget):
 
         self.bay_actors: List[vtk.vtkActor] = []
 
-        self.grid_actor = None
-        self._ensure_grid(size=120.0, step=1.0, z=0.0)
+        self.grid_actor_xy = None
+        self.grid_actor_xz = None
+        self.active_create_plane = "XY"
+        self.snap_step = 0.25
+        self._ensure_grid(size=120.0, step=1.0, plane="XY", offset=0.0)
+        self._ensure_grid(size=120.0, step=1.0, plane="XZ", offset=0.0)
+        self._set_active_grid_plane("XY")
         self.rebuild_scene(reset_camera=True)
         self.iren.Initialize()
 
@@ -222,6 +229,8 @@ class VTKCadView(QWidget):
         # initial position
         self.overlay.move(max(0, self.width() - self.overlay.width() - 16), 16)
 
+        self.iren.AddObserver("LeftButtonPressEvent", self._on_left_button_press)
+
     def resizeEvent(self, e):
         super().resizeEvent(e)
         # Keep overlay inside the view; do not force a fixed corner position
@@ -229,8 +238,8 @@ class VTKCadView(QWidget):
         y = min(self.overlay.y(), max(0, self.height() - self.overlay.height()))
         self.overlay.move(max(0, x), max(0, y))
 
-    def _ensure_grid(self, size: float, step: float, z: float = 0.0) -> None:
-        """Create or update an XY grid large enough for current scene."""
+    def _ensure_grid(self, size: float, step: float, plane: str = "XY", offset: float = 0.0) -> None:
+        """Create or update a construction grid on XY or XZ plane."""
         size = float(size)
         step = float(step)
         n = int(max(2, size / max(step, 1e-6)))
@@ -238,10 +247,22 @@ class VTKCadView(QWidget):
         lines = vtk.vtkCellArray()
         idx = 0
 
-        def add_seg(x0, y0, x1, y1):
+        plane = str(plane).upper().strip()
+
+        def add_seg_xy(x0, y0, x1, y1):
             nonlocal idx
-            pts.InsertNextPoint(x0, y0, z)
-            pts.InsertNextPoint(x1, y1, z)
+            pts.InsertNextPoint(x0, y0, offset)
+            pts.InsertNextPoint(x1, y1, offset)
+            line = vtk.vtkLine()
+            line.GetPointIds().SetId(0, idx)
+            line.GetPointIds().SetId(1, idx + 1)
+            lines.InsertNextCell(line)
+            idx += 2
+
+        def add_seg_xz(x0, z0, x1, z1):
+            nonlocal idx
+            pts.InsertNextPoint(x0, offset, z0)
+            pts.InsertNextPoint(x1, offset, z1)
             line = vtk.vtkLine()
             line.GetPointIds().SetId(0, idx)
             line.GetPointIds().SetId(1, idx + 1)
@@ -249,8 +270,12 @@ class VTKCadView(QWidget):
             idx += 2
 
         for i in range(-n, n + 1):
-            add_seg(-size, i * step, size, i * step)
-            add_seg(i * step, -size, i * step, size)
+            if plane == "XZ":
+                add_seg_xz(-size, i * step, size, i * step)
+                add_seg_xz(i * step, -size, i * step, size)
+            else:
+                add_seg_xy(-size, i * step, size, i * step)
+                add_seg_xy(i * step, -size, i * step, size)
 
         poly = vtk.vtkPolyData()
         poly.SetPoints(pts)
@@ -259,16 +284,50 @@ class VTKCadView(QWidget):
         mapper = vtk.vtkPolyDataMapper()
         mapper.SetInputData(poly)
 
-        if self.grid_actor is None:
+        actor_attr = "grid_actor_xz" if plane == "XZ" else "grid_actor_xy"
+        actor = getattr(self, actor_attr, None)
+        if actor is None:
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
             actor.GetProperty().SetColor(0.55, 0.55, 0.55)
             actor.GetProperty().SetOpacity(0.22)
             actor.GetProperty().SetLineWidth(1.0)
+            actor.SetPickable(True)
             self.renderer.AddActor(actor)
-            self.grid_actor = actor
+            setattr(self, actor_attr, actor)
         else:
-            self.grid_actor.SetMapper(mapper)
+            actor.SetMapper(mapper)
+
+    def _set_active_grid_plane(self, plane: str) -> None:
+        plane = str(plane).upper().strip()
+        self.active_create_plane = "XZ" if plane == "XZ" else "XY"
+        if self.grid_actor_xy is not None:
+            self.grid_actor_xy.SetVisibility(self.active_create_plane == "XY")
+        if self.grid_actor_xz is not None:
+            self.grid_actor_xz.SetVisibility(self.active_create_plane == "XZ")
+
+    def set_create_plane(self, plane: str) -> None:
+        self._set_active_grid_plane(plane)
+        self.vtkWidget.GetRenderWindow().Render()
+
+    def _snap_point(self, x: float, y: float, z: float) -> tuple[float, float, float]:
+        s = max(1e-6, float(self.snap_step))
+        sx = round(float(x) / s) * s
+        sy = round(float(y) / s) * s
+        sz = round(float(z) / s) * s
+        return sx, sy, sz
+
+    def _on_left_button_press(self, _obj, _evt):
+        picker = vtk.vtkCellPicker()
+        picker.SetTolerance(0.0005)
+        x, y = self.iren.GetEventPosition()
+        picked = picker.Pick(x, y, 0, self.renderer)
+        if picked:
+            px, py, pz = picker.GetPickPosition()
+            sx, sy, sz = self._snap_point(px, py, pz)
+            self.gridPointClicked.emit(sx, sy, sz)
+
+        self.iren.GetInteractorStyle().OnLeftButtonDown()
 
     def zoom(self, factor: float):
         cam = self.renderer.GetActiveCamera()
@@ -416,9 +475,12 @@ class VTKCadView(QWidget):
                 xs += [b.x_le_root, b.x_le_root + b.c_root, b.x_le_root + dx, b.x_le_root + dx + ctip]
                 ys += [b.y_le_root, b.y_le_root + dy]
             span_xy = max(max(xs) - min(xs), max(ys) - min(ys), 10.0)
-            self._ensure_grid(size=max(200.0, span_xy * 5.0), step=1.0, z=0.0)
+            gsize = max(200.0, span_xy * 5.0)
+            self._ensure_grid(size=gsize, step=1.0, plane="XY", offset=0.0)
+            self._ensure_grid(size=gsize, step=1.0, plane="XZ", offset=0.0)
         else:
-            self._ensure_grid(size=120.0, step=1.0, z=0.0)
+            self._ensure_grid(size=120.0, step=1.0, plane="XY", offset=0.0)
+            self._ensure_grid(size=120.0, step=1.0, plane="XZ", offset=0.0)
 
         colors = [(1, 0.7, 0.2), (0.45, 0.45, 0.95), (0.2, 0.7, 0.35), (0.8, 0.2, 0.2)]
         for i, b in enumerate(ordered):
@@ -712,6 +774,9 @@ class MainWindow(QMainWindow):
         self._last_connect_master = 0
         self._last_connect_slave = 0
         self._bay_tab_index: Dict[Tuple[int, int], int] = {}
+        self._create_first_point: Optional[Tuple[float, float, float]] = None
+        self._create_plane = "XY"
+        self._create_mode_active = False
 
         self.view3d = VTKCadView(self._ordered_avl_bays)
         self.setCentralWidget(self.view3d)
@@ -737,6 +802,8 @@ class MainWindow(QMainWindow):
         self.on_tree_selection_changed()
         self.statusBar().showMessage("Constraints updated", 2000)
 
+        self.view3d.gridPointClicked.connect(self._on_grid_point_clicked)
+
         self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self.on_tree_context_menu)
         self.tree.itemSelectionChanged.connect(self.on_tree_selection_changed)
@@ -752,6 +819,12 @@ class MainWindow(QMainWindow):
         m_file.addSeparator()
         a_export = QAction("Export AVL...", self); a_export.triggered.connect(self.export_avl)
         m_file.addAction(a_export)
+
+        m_create = mb.addMenu("Create")
+        a_xy = QAction("Draw surface (2 points) on XY", self); a_xy.triggered.connect(lambda: self._start_surface_create("XY"))
+        a_xz = QAction("Draw surface (2 points) on XZ", self); a_xz.triggered.connect(lambda: self._start_surface_create("XZ"))
+        a_cancel_create = QAction("Cancel drawing", self); a_cancel_create.triggered.connect(self._cancel_surface_create)
+        m_create.addAction(a_xy); m_create.addAction(a_xz); m_create.addSeparator(); m_create.addAction(a_cancel_create)
 
         m_edit = mb.addMenu("Edit")
         for kind in SURFACE_KINDS:
@@ -772,6 +845,67 @@ class MainWindow(QMainWindow):
 
         m_edit.addSeparator()
         m_edit.addAction(a_rm_w); m_edit.addAction(a_rm_b)
+
+
+    def _start_surface_create(self, plane: str):
+        self._create_plane = "XZ" if str(plane).upper().strip() == "XZ" else "XY"
+        self._create_mode_active = True
+        self._create_first_point = None
+        self.view3d.set_create_plane(self._create_plane)
+        self.statusBar().showMessage(f"Create mode [{self._create_plane}]: click first corner on grid", 4000)
+
+    def _cancel_surface_create(self):
+        self._create_mode_active = False
+        self._create_first_point = None
+        self.statusBar().showMessage("Create mode cancelled", 2500)
+
+    def _on_grid_point_clicked(self, x: float, y: float, z: float):
+        if (not self._create_mode_active) or self._create_plane not in ("XY", "XZ"):
+            return
+
+        p = (float(x), float(y), float(z))
+        if self._create_first_point is None:
+            self._create_first_point = p
+            self.statusBar().showMessage(f"First point: ({p[0]:.3f}, {p[1]:.3f}, {p[2]:.3f}) - click opposite corner", 5000)
+            return
+
+        p1 = self._create_first_point
+        self._create_first_point = None
+        self._create_surface_from_corners(p1, p, self._create_plane)
+
+    def _create_surface_from_corners(self, p1: Tuple[float, float, float], p2: Tuple[float, float, float], plane: str):
+        x1, y1, z1 = p1
+        x2, y2, z2 = p2
+
+        chord = max(0.05, abs(x2 - x1))
+        if plane == "XZ":
+            span = max(0.05, abs(z2 - z1))
+            root = (min(x1, x2), 0.0, min(z1, z2))
+            kind = "fin"
+            dihedral = 90.0
+        else:
+            span = max(0.05, abs(y2 - y1))
+            root = (min(x1, x2), min(y1, y2), z1)
+            kind = "wing"
+            dihedral = 0.0
+
+        wing = WingModel(name=f"{SURFACE_LABELS[kind]} {len(self.project.wings)+1}", surface_kind=kind)
+        bay = BayModel(
+            name="Bay 1",
+            x_le_root=root[0], y_le_root=root[1], z_le_root=root[2],
+            c_root=chord, c_tip=chord,
+            span=span, dihedral_deg=dihedral,
+            sweep_mode="LE", sweep_deg=0.0,
+            surface_kind=kind,
+        )
+        update_default_sections_from_bay(bay)
+        wing.bays = [bay]
+        self.project.wings.append(wing)
+
+        self.rebuild_tree()
+        self.refresh_scene()
+        self._create_mode_active = False
+        self.statusBar().showMessage(f"Created {kind} surface from 2-point sketch", 3500)
 
     def _build_default_project(self):
         wing = WingModel(name="ala1")
