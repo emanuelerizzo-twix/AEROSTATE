@@ -80,6 +80,10 @@ def project_to_dict(p: Project) -> Dict[str, Any]:
     return {
         "schema": 2,
         "wings": [wing_to(w) for w in p.wings],
+        "concentrated_masses": [
+            {"x": float(cm.x), "y": float(cm.y), "z": float(cm.z), "mass": float(cm.mass)}
+            for cm in (p.concentrated_masses or [])
+        ],
         "connections": [
             {"master_index": c.master_index, "slave_index": c.slave_index, "ctype": c.ctype}
             for c in p.connections
@@ -186,6 +190,15 @@ def project_from_dict(d: Dict[str, Any]) -> Project:
 
     p = Project()
     p.wings = [wing_from(w) for w in d.get("wings", [])]
+    p.concentrated_masses = [
+        ConcentratedMass(
+            x=float(cm.get("x", 0.0)),
+            y=float(cm.get("y", 0.0)),
+            z=float(cm.get("z", 0.0)),
+            mass=float(cm.get("mass", 0.0)),
+        )
+        for cm in d.get("concentrated_masses", []) or []
+    ]
     p.connections = []
     for c in d.get("connections", []) or []:
         try:

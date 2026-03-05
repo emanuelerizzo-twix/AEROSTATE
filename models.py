@@ -104,6 +104,7 @@ class WingModel:
 class Project:
     wings: List[WingModel] = field(default_factory=list)
     connections: List[BayConnection] = field(default_factory=list)
+    concentrated_masses: List["ConcentratedMass"] = field(default_factory=list)
     filepath: Optional[str] = None
 
 
