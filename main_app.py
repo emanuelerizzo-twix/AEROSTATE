@@ -1985,14 +1985,108 @@ class MainWindow(QMainWindow):
         self.refresh_scene()
         self.on_tree_selection_changed()
 
+    def _prompt_winglet_attach_target(self) -> Optional[int]:
+        candidates = [(i, w.name) for i, w in enumerate(self.project.wings)]
+        if not candidates:
+            QMessageBox.warning(self, "Add winglet", "A winglet requires at least 1 existing wing/surface to connect.")
+            return None
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Add winglet")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("Select the wing/surface this winglet connects to:"))
+
+        cb = QComboBox()
+        for i, name in candidates:
+            cb.addItem(name, userData=i)
+        lay.addWidget(cb)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+
+        if dlg.exec() != QDialog.Accepted:
+            return None
+        data = cb.currentData()
+        return int(data) if data is not None else None
+
+    def _prompt_bulk_attach_targets(self) -> Optional[List[int]]:
+        candidates = [(i, w.name) for i, w in enumerate(self.project.wings)]
+        if len(candidates) < 2:
+            QMessageBox.warning(self, "Add bulk", "A bulk requires at least 2 existing wings/surfaces.")
+            return None
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Add bulk")
+        lay = QVBoxLayout(dlg)
+        lay.addWidget(QLabel("Select the wings/surfaces connected by this bulk:"))
+
+        tbl = QTableWidget()
+        tbl.setColumnCount(2)
+        tbl.setHorizontalHeaderLabels(["Connect", "Wing/Surface"])
+        tbl.setRowCount(len(candidates))
+        tbl.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        tbl.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        tbl.verticalHeader().setVisible(False)
+        tbl.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        for r, (i, name) in enumerate(candidates):
+            it_chk = QTableWidgetItem()
+            it_chk.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+            it_chk.setCheckState(Qt.Checked if r < 2 else Qt.Unchecked)
+            tbl.setItem(r, 0, it_chk)
+            it_name = QTableWidgetItem(name)
+            it_name.setData(Qt.UserRole, i)
+            it_name.setFlags(Qt.ItemIsEnabled)
+            tbl.setItem(r, 1, it_name)
+        lay.addWidget(tbl)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        bb.accepted.connect(dlg.accept)
+        bb.rejected.connect(dlg.reject)
+        lay.addWidget(bb)
+
+        if dlg.exec() != QDialog.Accepted:
+            return None
+
+        out: List[int] = []
+        for r in range(tbl.rowCount()):
+            chk = tbl.item(r, 0)
+            name_it = tbl.item(r, 1)
+            if chk is not None and name_it is not None and chk.checkState() == Qt.Checked:
+                idx = name_it.data(Qt.UserRole)
+                if idx is not None:
+                    out.append(int(idx))
+
+        out = list(dict.fromkeys(out))
+        if len(out) < 2:
+            QMessageBox.warning(self, "Add bulk", "Select at least 2 wings/surfaces for the bulk connection.")
+            return None
+        return out
+
     def add_surface(self, kind: str = "wing"):
         kind = (kind or "wing").strip().lower()
         if kind not in SURFACE_KINDS:
             kind = "wing"
-        if kind == "bulk" and len(self.project.wings) < 2:
-            QMessageBox.warning(self, "Add bulk", "A bulk requires at least 2 existing wings/surfaces.")
-            return
-        w = WingModel(name=f"{kind}{len(self.project.wings)+1}", surface_kind=kind)
+
+        winglet_target: Optional[int] = None
+        bulk_targets: List[int] = []
+        if kind == "winglet":
+            winglet_target = self._prompt_winglet_attach_target()
+            if winglet_target is None:
+                return
+        if kind == "bulk":
+            targets = self._prompt_bulk_attach_targets()
+            if targets is None:
+                return
+            bulk_targets = targets
+
+        w = WingModel(
+            name=f"{kind}{len(self.project.wings)+1}",
+            surface_kind=kind,
+            winglet_attach_to_wing=winglet_target,
+            bulk_attach_to_wings=bulk_targets,
+        )
         b = BayModel(name="Bay 1", surface_kind=kind)
         update_default_sections_from_bay(b)
         if self.project.wings:
